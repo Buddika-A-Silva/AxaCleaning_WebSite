@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Staff sign in · AXA Cleaning</title>
+  <meta name="robots" content="noindex"><meta name="theme-color" content="#0a2540">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <script type="module" src="/admin/login.js"></script>
+</head>
+<body class="login-page">
+  <div class="login-bg" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <main class="login-card">
+    <a class="back" href="/">← Back to website</a>
+    <div class="login-brand"><img src="/assets/logo.svg" alt="" width="56" height="56"><div><h1>AXA <b>Cleaning</b></h1><p>Staff portal</p></div></div>
+    <form id="loginForm" class="form" autocomplete="on">
+      <label>Username<input name="username" required autocomplete="username" autofocus></label>
+      <label>Password<span class="pw"><input name="password" type="password" required autocomplete="current-password"><button type="button" class="pw-toggle" aria-label="Show password">Show</button></span></label>
+      <label class="check"><input type="checkbox" name="remember" checked> Keep me signed in on this device</label>
+      <p class="form-error" role="alert" hidden></p>
+      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+    </form>
+    <p class="hint">Accounts are created by a Manager or Super Admin. Forgot your password? Ask your manager to reset it.</p>
+  </main>
+</body>
+</html>

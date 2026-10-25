@@ -1,0 +1,12 @@
+{
+  "name": "axa-cleaning",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AXA Cleaning – public website + staff portal on Azure Static Web Apps",
+  "scripts": {
+    "dev": "node dev-server.js",
+    "test": "node --test tests/*.test.mjs",
+    "swa": "swa start frontend --api-location api"
+  },
+  "engines": { "node": ">=18" }
+}

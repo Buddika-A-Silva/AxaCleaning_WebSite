@@ -1,0 +1,18 @@
+{
+  "name": "axa-cleaning-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AXA Cleaning booking API (Azure Functions, Node.js v4 programming model)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "func start"
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.0",
+    "@azure/functions": "^4.6.0",
+    "nodemailer": "^6.9.16"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

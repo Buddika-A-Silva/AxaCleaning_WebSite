@@ -1,0 +1,3 @@
+.data
+local.settings.json
+*.test.*

@@ -1,0 +1,24 @@
+{
+  "routes": [
+    { "route": "/admin", "rewrite": "/admin/index.html" },
+    { "route": "/portal", "redirect": "/admin/", "statusCode": 302 },
+    { "route": "/admin/*.html", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/api/*", "allowedRoles": ["anonymous"] }
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/admin/*", "/css/*", "/js/*", "/assets/*", "/api/*", "*.{png,jpg,jpeg,gif,svg,webp,ico,css,js,json,txt,xml}"]
+  },
+  "responseOverrides": {
+    "404": { "rewrite": "/404.html" }
+  },
+  "globalHeaders": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  },
+  "mimeTypes": { ".webmanifest": "application/manifest+json" },
+  "platform": { "apiRuntime": "node:20" }
+}

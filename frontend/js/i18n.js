@@ -90,6 +90,7 @@ const translations = {
   'Estimate': 'Estimare', 'Back': 'Înapoi', 'Continue': 'Continuă', 'Send booking request': 'Trimite solicitarea de rezervare',
   'Sign in': 'Autentificare', 'Signing in…': 'Se autentifică…', 'Show': 'Arată', 'Hide': 'Ascunde',
   'Service area scope': 'Scara zonei deservite', 'Local': 'Local', 'Regional': 'Regional',
+  'Product by': 'Realizat de',
   'Nationwide': 'La nivel național', 'Worldwide': 'La nivel mondial', 'Custom details': 'Detalii personalizate',
   'Service area details': 'Detaliile zonei deservite',
   'Only publish approved locations or details. Details are optional for Worldwide.': 'Publică doar locații sau detalii aprobate. Detaliile sunt opționale pentru acoperirea mondială.',

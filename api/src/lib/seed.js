@@ -14,44 +14,54 @@ const BUSINESS_DEFAULTS = {
 
 const PACKAGES = [
   {
-    id: 'pkg-essential', name: 'Essential Sparkle', category: 'Home', tagline: 'A fresh, tidy home every visit',
+    id: 'pkg-essential', name: 'Essential Sparkle', nameRo: 'Strălucire esențială', category: 'Home', categoryRo: 'Locuință', tagline: 'A fresh, tidy home every visit', taglineRo: 'O locuință curată și ordonată la fiecare vizită',
     price: 79, durationHours: 2, agentsRequired: 1, icon: 'sparkle', color: '#22c3e6', popular: false, order: 1,
     features: ['Dusting of all reachable surfaces', 'Vacuum & mop all floors', 'Kitchen counters & sink', 'Bathroom wipe-down & toilet', 'Bins emptied'],
     excludes: ['Inside appliances', 'Windows', 'Laundry'],
+    featuresRo: ['Ștergerea prafului de pe suprafețele accesibile', 'Aspirarea și spălarea tuturor podelelor', 'Blaturi și chiuvetă în bucătărie', 'Curățarea suprafețelor din baie și a toaletei', 'Golirea coșurilor de gunoi'],
+    excludesRo: ['Interiorul electrocasnicelor', 'Ferestre', 'Rufe'],
   },
   {
-    id: 'pkg-deep', name: 'Deep Clean Pro', category: 'Home', tagline: 'Top-to-bottom reset for your whole home',
+    id: 'pkg-deep', name: 'Deep Clean Pro', nameRo: 'Curățenie generală Pro', category: 'Home', categoryRo: 'Locuință', tagline: 'Top-to-bottom reset for your whole home', taglineRo: 'Curățenie completă, dintr-un capăt în celălalt al locuinței',
     price: 189, durationHours: 5, agentsRequired: 2, icon: 'bubbles', color: '#6c5ce7', popular: true, order: 2,
     features: ['Everything in Essential', 'Inside oven & fridge', 'Skirting boards & door frames', 'Limescale removal', 'Interior windows', 'Cabinet fronts & handles'],
     excludes: ['Exterior windows'],
+    featuresRo: ['Tot ce include pachetul Strălucire esențială', 'Curățarea interiorului cuptorului și frigiderului', 'Plinte și tocuri de uși', 'Îndepărtarea depunerilor de calcar', 'Ferestre la interior', 'Ușile și mânerele dulapurilor'],
+    excludesRo: ['Ferestre la exterior'],
   },
   {
-    id: 'pkg-move', name: 'Move In / Move Out', category: 'Home', tagline: 'Hand the keys back spotless',
+    id: 'pkg-move', name: 'Move In / Move Out', nameRo: 'Curățenie la mutare', category: 'Home', categoryRo: 'Locuință', tagline: 'Hand the keys back spotless', taglineRo: 'Predă cheile și lasă locuința impecabilă',
     price: 299, durationHours: 7, agentsRequired: 3, icon: 'box', color: '#ff7a59', popular: false, order: 3,
     features: ['Everything in Deep Clean', 'Inside all cupboards & drawers', 'Wall spot-cleaning', 'All appliances inside & out', 'Balcony / patio sweep', 'Landlord-ready checklist'],
     excludes: [],
+    featuresRo: ['Tot ce include pachetul Curățenie generală', 'Interiorul tuturor dulapurilor și sertarelor', 'Curățarea petelor de pe pereți', 'Interiorul și exteriorul electrocasnicelor', 'Măturarea balconului sau terasei', 'Listă de verificare pentru predarea locuinței'],
+    excludesRo: [],
   },
   {
-    id: 'pkg-office', name: 'Office Pristine', category: 'Commercial', tagline: 'A healthier, sharper workplace',
+    id: 'pkg-office', name: 'Office Pristine', nameRo: 'Birou impecabil', category: 'Commercial', categoryRo: 'Comercial', tagline: 'A healthier, sharper workplace', taglineRo: 'Un spațiu de lucru mai curat și mai plăcut',
     price: 249, durationHours: 4, agentsRequired: 2, icon: 'building', color: '#00b894', popular: false, order: 4,
     features: ['Desks, screens & phones sanitised', 'Meeting rooms reset', 'Kitchen & break areas', 'Restrooms deep-cleaned', 'Floors vacuumed & mopped', 'Waste & recycling'],
     excludes: ['Carpet shampoo'],
+    featuresRo: ['Dezinfectarea birourilor, ecranelor și telefoanelor', 'Rearanjarea sălilor de ședință', 'Curățarea bucătăriei și a zonelor de relaxare', 'Curățarea în profunzime a toaletelor', 'Aspirarea și spălarea podelelor', 'Golirea coșurilor și colectarea reciclării'],
+    excludesRo: ['Șamponarea covoarelor'],
   },
   {
-    id: 'pkg-eco', name: 'Eco Green Clean', category: 'Specialty', tagline: '100% plant-based products, zero harsh chemicals',
+    id: 'pkg-eco', name: 'Eco Green Clean', nameRo: 'Curățenie ecologică', category: 'Specialty', categoryRo: 'Specializat', tagline: '100% plant-based products, zero harsh chemicals', taglineRo: 'Produse 100% pe bază de plante, fără substanțe chimice agresive',
     price: 129, durationHours: 3, agentsRequired: 1, icon: 'leaf', color: '#2ecc71', popular: false, order: 5,
     features: ['Certified eco-friendly products', 'Microfibre-only cleaning', 'Pet & child safe', 'Kitchen & bathrooms', 'All floors'],
     excludes: ['Inside appliances'],
+    featuresRo: ['Produse ecologice certificate', 'Curățare exclusiv cu lavete din microfibră', 'Sigur pentru copii și animale de companie', 'Curățarea bucătăriei și băilor', 'Curățarea tuturor podelelor'],
+    excludesRo: ['Interiorul electrocasnicelor'],
   },
 ];
 
 const EXTRAS = [
-  { id: 'oven', name: 'Inside oven', price: 30 },
-  { id: 'fridge', name: 'Inside fridge', price: 25 },
-  { id: 'windows', name: 'Interior windows', price: 40 },
-  { id: 'balcony', name: 'Balcony / patio', price: 20 },
-  { id: 'laundry', name: 'Laundry & ironing (1 load)', price: 15 },
-  { id: 'carpet', name: 'Carpet steam (per room)', price: 35 },
+  { id: 'oven', name: 'Inside oven', nameRo: 'Interiorul cuptorului', price: 30 },
+  { id: 'fridge', name: 'Inside fridge', nameRo: 'Interiorul frigiderului', price: 25 },
+  { id: 'windows', name: 'Interior windows', nameRo: 'Ferestre la interior', price: 40 },
+  { id: 'balcony', name: 'Balcony / patio', nameRo: 'Balcon sau terasă', price: 20 },
+  { id: 'laundry', name: 'Laundry & ironing (1 load)', nameRo: 'Spălare și călcare (o tură)', price: 15 },
+  { id: 'carpet', name: 'Carpet steam (per room)', nameRo: 'Curățare cu abur a covorului (per cameră)', price: 35 },
 ];
 
 const AGENTS = [

@@ -48,11 +48,11 @@ function resendMessage(message) {
   };
 }
 
-const money = (n, currency = process.env.CURRENCY || 'USD') => {
-  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(n); }
+const money = (n, currency = process.env.CURRENCY || 'USD', language = 'en') => {
+  try { return new Intl.NumberFormat(language === 'ro' ? 'ro-RO' : 'en-US', { style: 'currency', currency }).format(n); }
   catch { return `${currency} ${n}`; }
 };
-const prettyDate = (d) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const prettyDate = (d, language = 'en') => new Date(d + 'T00:00:00Z').toLocaleDateString(language === 'ro' ? 'ro-RO' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 const KINDS = {
   received: { badge: 'Request received', color: '#22c3e6', intro: (b) => `Thank you for choosing ${COMPANY()}! We have received your booking request <b>${b.ref}</b>. Our team is checking cleaner availability and will confirm shortly. All updates about this booking will arrive in this same e-mail thread.` },
@@ -64,20 +64,33 @@ const KINDS = {
   note: { badge: 'Message from our team', color: '#0a2540', intro: (b) => `There is a new message about your booking <b>${b.ref}</b>.` },
 };
 
+const KINDS_RO = {
+  received: { badge: 'Solicitare primită', intro: (b) => `Îți mulțumim că ai ales ${COMPANY()}! Am primit solicitarea ta de rezervare <b>${b.ref}</b>. Echipa noastră verifică disponibilitatea și îți va confirma în curând. Toate actualizările vor veni în aceeași conversație prin e-mail.` },
+  accepted: { badge: 'Rezervare confirmată', intro: (b) => `Vești bune — rezervarea <b>${b.ref}</b> este <b>confirmată</b>. Echipa de curățenie va ajunge la ora programată.` },
+  modified: { badge: 'Rezervare actualizată', intro: (b) => `Rezervarea <b>${b.ref}</b> a fost actualizată. Consultă detaliile de mai jos.` },
+  rejected: { badge: 'Rezervare refuzată', intro: (b) => `Ne pare rău — nu putem accepta rezervarea <b>${b.ref}</b> în forma solicitată.` },
+  cancelled: { badge: 'Rezervare anulată', intro: (b) => `Rezervarea <b>${b.ref}</b> a fost anulată.` },
+  completed: { badge: 'Serviciu finalizat', intro: (b) => `Curățenia aferentă rezervării <b>${b.ref}</b> a fost finalizată. Îți mulțumim că ai ales ${COMPANY()}! Ne-ar plăcea să aflăm părerea ta; răspunde la acest e-mail.` },
+  note: { badge: 'Mesaj din partea echipei', intro: (b) => `Ai primit un mesaj nou despre rezervarea <b>${b.ref}</b>.` },
+};
+
 function render(booking, kind, { note, changes, agentNames, business } = {}) {
-  const k = KINDS[kind] || KINDS.note;
+  const language = booking.language === 'ro' ? 'ro' : 'en';
+  const ro = language === 'ro';
+  const source = (ro ? KINDS_RO : KINDS)[kind] || (ro ? KINDS_RO : KINDS).note;
+  const k = { ...source, color: (KINDS[kind] || KINDS.note).color };
   const b = booking;
   const companyName = COMPANY(business);
   const companyEmail = COMPANY_EMAIL(business);
   const rows = [
-    ['Reference', b.ref], ['Package', b.packageName], ['Date', prettyDate(b.date)], ['Arrival time', b.startTime],
-    ['Estimated duration', `${b.durationHours} hours`],
-    ['Address', [b.address?.line1, b.address?.city, b.address?.postcode].filter(Boolean).join(', ')],
-    ['Extras', (b.extras || []).map((e) => e.name).join(', ') || '—'],
-    ['Estimated price', money(b.price, business?.currency)], ['Status', b.status.toUpperCase()],
+    [ro ? 'Referință' : 'Reference', b.ref], [ro ? 'Pachet' : 'Package', b.packageName], [ro ? 'Data' : 'Date', prettyDate(b.date, language)], [ro ? 'Ora sosirii' : 'Arrival time', b.startTime],
+    [ro ? 'Durată estimată' : 'Estimated duration', `${b.durationHours} ${ro ? 'ore' : 'hours'}`],
+    [ro ? 'Adresă' : 'Address', [b.address?.line1, b.address?.city, b.address?.postcode].filter(Boolean).join(', ')],
+    [ro ? 'Servicii suplimentare' : 'Extras', (b.extras || []).map((e) => e.name).join(', ') || '—'],
+    [ro ? 'Preț estimat' : 'Estimated price', money(b.price, business?.currency, language)], [ro ? 'Stare' : 'Status', b.status.toUpperCase()],
   ];
-  if (agentNames?.length && b.status === 'accepted') rows.splice(5, 0, ['Your cleaners', agentNames.join(', ')]);
-  const changeHtml = changes?.length ? `<p style="margin:16px 0 6px;font-weight:600">What changed</p><ul style="margin:0;padding-left:18px">${changes.map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul>` : '';
+  if (agentNames?.length && b.status === 'accepted') rows.splice(5, 0, [ro ? 'Echipa ta de curățenie' : 'Your cleaners', agentNames.join(', ')]);
+  const changeHtml = changes?.length ? `<p style="margin:16px 0 6px;font-weight:600">${ro ? 'Modificări' : 'What changed'}</p><ul style="margin:0;padding-left:18px">${changes.map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul>` : '';
   const noteHtml = note ? `<div style="margin:16px 0;padding:14px 16px;background:#f1f8fb;border-left:4px solid ${k.color};border-radius:8px;white-space:pre-wrap">${escapeHtml(note)}</div>` : '';
   const html = `<!doctype html><html><body style="margin:0;background:#eef4f8;font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#0a2540">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
@@ -86,17 +99,17 @@ function render(booking, kind, { note, changes, agentNames, business } = {}) {
 <div style="font-size:22px;font-weight:800;letter-spacing:.5px">✦ ${escapeHtml(companyName)}</div>
 <div style="display:inline-block;margin-top:12px;padding:6px 12px;border-radius:999px;background:${k.color};font-size:13px;font-weight:600">${k.badge}</div></td></tr>
 <tr><td style="padding:28px 32px;font-size:15px;line-height:1.6">
-<p style="margin:0 0 12px">Hi ${escapeHtml(b.customer?.name || 'there')},</p><p style="margin:0">${k.intro(b)}</p>${noteHtml}${changeHtml}
+<p style="margin:0 0 12px">${ro ? 'Bună' : 'Hi'} ${escapeHtml(b.customer?.name || (ro ? '' : 'there'))},</p><p style="margin:0">${k.intro(b)}</p>${noteHtml}${changeHtml}
 <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;border-collapse:collapse;font-size:14px">
 ${rows.map(([l, v]) => `<tr><td style="padding:9px 0;border-bottom:1px solid #edf2f7;color:#5a6b7d;width:42%">${escapeHtml(l)}</td><td style="padding:9px 0;border-bottom:1px solid #edf2f7;font-weight:600">${escapeHtml(v)}</td></tr>`).join('')}
 </table>
-<p style="margin:22px 0 0;font-size:13px;color:#5a6b7d">Questions or changes? Simply reply to this e-mail${companyEmail ? ` — it reaches our bookings team at <a href="mailto:${escapeHtml(companyEmail)}">${escapeHtml(companyEmail)}</a>` : ''}. Please keep the reference <b>${b.ref}</b> in the subject.</p>
-</td></tr><tr><td style="background:#f7fafc;padding:16px 32px;font-size:12px;color:#8a9bb0">${escapeHtml(companyName)} · Professional cleaning services${companyEmail ? ` · ${escapeHtml(companyEmail)}` : ''}</td></tr>
+<p style="margin:22px 0 0;font-size:13px;color:#5a6b7d">${ro ? 'Ai întrebări sau modificări? Răspunde la acest e-mail' : 'Questions or changes? Simply reply to this e-mail'}${companyEmail ? ` — ${ro ? 'mesajul ajunge la echipa noastră de rezervări la' : 'it reaches our bookings team at'} <a href="mailto:${escapeHtml(companyEmail)}">${escapeHtml(companyEmail)}</a>` : ''}. ${ro ? 'Păstrează referința' : 'Please keep the reference'} <b>${b.ref}</b> ${ro ? 'în subiect' : 'in the subject'}.</p>
+</td></tr><tr><td style="background:#f7fafc;padding:16px 32px;font-size:12px;color:#8a9bb0">${escapeHtml(companyName)} · ${ro ? 'Servicii profesionale de curățenie' : 'Professional cleaning services'}${companyEmail ? ` · ${escapeHtml(companyEmail)}` : ''}</td></tr>
 </table></td></tr></table></body></html>`;
   const text = [
-    `Hi ${b.customer?.name || 'there'},`, '', k.intro(b).replace(/<[^>]+>/g, ''), note ? `\nMessage: ${note}` : '',
-    changes?.length ? `\nWhat changed:\n${changes.map((c) => ` - ${c}`).join('\n')}` : '', '',
-    ...rows.map(([l, v]) => `${l}: ${v}`), '', `Reply to this e-mail${companyEmail ? ` or write to ${companyEmail}` : ''} (ref ${b.ref}).`, `— ${companyName}`,
+    `${ro ? 'Bună' : 'Hi'} ${b.customer?.name || (ro ? '' : 'there')},`, '', k.intro(b).replace(/<[^>]+>/g, ''), note ? `\n${ro ? 'Mesaj' : 'Message'}: ${note}` : '',
+    changes?.length ? `\n${ro ? 'Modificări' : 'What changed'}:\n${changes.map((c) => ` - ${c}`).join('\n')}` : '', '',
+    ...rows.map(([l, v]) => `${l}: ${v}`), '', `${ro ? 'Răspunde la acest e-mail' : 'Reply to this e-mail'}${companyEmail ? ` ${ro ? 'sau scrie la' : 'or write to'} ${companyEmail}` : ''} (${ro ? 'ref.' : 'ref'} ${b.ref}).`, `— ${companyName}`,
   ].join('\n');
   return { html, text, badge: k.badge };
 }
@@ -156,7 +169,8 @@ async function sendContactMail(store, contact, business) {
   const companyEmail = COMPANY_EMAIL(business);
   const from = FROM(business);
   const subject = `${COMPANY(business)} contact request ${contact.id}`;
-  const text = `Name: ${contact.name}\nE-mail: ${contact.email}\nPhone: ${contact.phone || 'Not provided'}\n\n${contact.message}`;
+  const ro = contact.language === 'ro';
+  const text = `${ro ? 'Nume' : 'Name'}: ${contact.name}\nE-mail: ${contact.email}\n${ro ? 'Telefon' : 'Phone'}: ${contact.phone || (ro ? 'Necompletat' : 'Not provided')}\n\n${contact.message}`;
   const record = {
     id: uid('eml_'), kind: 'contact', contactId: contact.id, to: companyEmail, replyTo: contact.email,
     subject, text, sentAt: nowIso(), status: 'logged', error: null, by: 'public',

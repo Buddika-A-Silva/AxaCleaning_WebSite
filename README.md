@@ -54,6 +54,10 @@ tests/api.test.mjs          end-to-end API tests (npm test)
 Safeguards: you can't change your own role or delete yourself, there is always at least one active Super Admin, and a role change, deactivation or password reset signs that user out everywhere.
 Availability conflicts can only be overridden by a Manager or Super Admin, and each override requires a reason.
 
+### Languages
+
+The public website, booking and contact forms, staff sign-in, and staff portal support English and Romanian. A language selector is available on each page; the preference is saved in the browser and defaults to Romanian when the browser language is Romanian, otherwise English. Dates, currency display, standard API validation/errors, and customer booking e-mails use the selected locale. The selected language is stored with a customer's booking/contact request. Service package names, categories, descriptions, included/excluded features, and extras have optional Romanian fields; if a business has not supplied a Romanian value, the English value is shown. Staff can maintain these translations in the Packages section.
+
 ### E-mail thread per booking
 
 1. The customer submits a request. The first e-mail goes **to the customer, CC the company mailbox** (`COMPANY_EMAIL`), with Reply-To set to the company mailbox and a unique `Message-ID`.
@@ -104,7 +108,7 @@ The Super Admin can set the company name, reply mailbox, public phone, service a
 
 **Do not treat this repository as launch-approved until the owner completes these items:**
 
-- Replace local demo package, price, extra, and agent data with approved business content. Never reuse a development database for production.
+- Replace local demo package, price, extra, and agent data with approved business content; provide Romanian names/descriptions/features for packages and extras that need localization. Never reuse a development database for production.
 - Confirm the service area, public contact details, and currency in Business Settings.
 - Have the privacy notice and terms reviewed and publish the approved content. The readiness checklist deliberately remains incomplete until this external action is done.
 - Implement secure, expiring customer self-service links if customers must change or cancel requests online. The current public tracking lookup uses the booking reference and customer e-mail and is read-only.

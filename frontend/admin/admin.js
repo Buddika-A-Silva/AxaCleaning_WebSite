@@ -1,4 +1,4 @@
-import { api, session, esc, $, $$ } from './common.js';
+import { api, session, esc, $, $$, getLanguage } from './common.js';
 
 // ====================================================================== state & helpers
 const RANK = { admin: 1, manager: 2, superadmin: 3 };
@@ -6,15 +6,18 @@ const ROLE_LABEL = { superadmin: 'Super Admin', manager: 'Manager', admin: 'Admi
 const S = { user: null, packages: [], extras: [], agents: [], currency: 'USD', board: { start: null, days: 7 }, bf: { status: 'pending', q: '', from: '', to: '', sort: 'created' }, notif: { unread: -1, seen: new Set() }, today: null };
 const can = (min) => RANK[S.user?.role] >= RANK[min];
 const icon = (id) => `<svg><use href="#i-${id}"/></svg>`;
-let moneyFmt = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' });
+const locale = () => getLanguage() === 'ro' ? 'ro-RO' : 'en-GB';
+let moneyFmt = new Intl.NumberFormat(locale(), { style: 'currency', currency: 'USD' });
 const money = (n) => moneyFmt.format(n || 0);
 const initials = (n) => String(n || '?').split(/\s+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase();
 const D = (d) => new Date(d + 'T00:00:00Z');
-const fmtDate = (d, o = { weekday: 'short', day: 'numeric', month: 'short' }) => (d ? D(d).toLocaleDateString('en-GB', { ...o, timeZone: 'UTC' }) : '—');
-const fmtDT = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+const fmtDate = (d, o = { weekday: 'short', day: 'numeric', month: 'short' }) => (d ? D(d).toLocaleDateString(locale(), { ...o, timeZone: 'UTC' }) : '—');
+const fmtDT = (iso) => (iso ? new Date(iso).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 const addDays = (d, n) => { const x = D(d); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; if (s < 60) return 'just now'; if (s < 3600) return `${Math.floor(s / 60)} min ago`; if (s < 86400) return `${Math.floor(s / 3600)} h ago`; return `${Math.floor(s / 86400)} d ago`; };
+const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; if (s < 60) return getLanguage() === 'ro' ? 'chiar acum' : 'just now'; if (s < 3600) return `${Math.floor(s / 60)} min ago`; if (s < 86400) return `${Math.floor(s / 3600)} h ago`; return `${Math.floor(s / 86400)} d ago`; };
 const statusPill = (s) => `<span class="status ${esc(s)}">${esc(s)}</span>`;
+const localizedValue = (item, field) => getLanguage() === 'ro' && item?.[`${field}Ro`] ? item[`${field}Ro`] : item?.[field];
+const packageName = (booking) => localizedValue(S.packages.find((p) => p.id === booking.packageId), 'name') || booking.packageName;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function toast(msg, type = '') {
@@ -95,7 +98,7 @@ async function boot() {
   try {
     const [pub] = await Promise.all([api('/packages', { anon: true }), loadRefs()]);
     S.currency = pub.currency || 'USD';
-    try { moneyFmt = new Intl.NumberFormat(undefined, { style: 'currency', currency: S.currency }); } catch {}
+    try { moneyFmt = new Intl.NumberFormat(locale(), { style: 'currency', currency: S.currency }); } catch {}
   } catch (e) { fail(e); }
   addEventListener('hashchange', route);
   route();
@@ -220,7 +223,7 @@ async function viewDashboard(v) {
   drawBoard();
 }
 function li(b) {
-  return `<button class="li" data-bid="${esc(b.id)}"><span class="date"><small>${fmtDate(b.date, { month: 'short' })}</small><b>${+b.date.slice(8)}</b></span><span class="grow"><b>${esc(b.customer?.name || b.customer)} · ${esc(b.packageName)}</b><small>${esc(b.ref)} · ${fmtDate(b.date, { weekday: 'short' })} ${esc(b.startTime)}</small></span>${statusPill(b.status)}</button>`;
+  return `<button class="li" data-bid="${esc(b.id)}"><span class="date"><small>${fmtDate(b.date, { month: 'short' })}</small><b>${+b.date.slice(8)}</b></span><span class="grow"><b>${esc(b.customer?.name || b.customer)} · ${esc(packageName(b))}</b><small>${esc(b.ref)} · ${fmtDate(b.date, { weekday: 'short' })} ${esc(b.startTime)}</small></span>${statusPill(b.status)}</button>`;
 }
 async function drawBoard() {
   const el = $('#board'); if (!el) return;
@@ -264,7 +267,7 @@ async function viewBookings(v) {
       ${list.map((b) => `<tr class="clickable" data-bid="${esc(b.id)}">
         <td data-label="Ref"><span class="ref">${esc(b.ref)}</span><span class="sub">${ago(b.createdAt)}</span></td>
         <td data-label="Customer"><b>${esc(b.customer.name)}</b><span class="sub">${esc(b.customer.phone)}</span></td>
-        <td data-label="Package">${esc(b.packageName)}</td>
+        <td data-label="Package">${esc(packageName(b))}</td>
         <td data-label="When"><b>${fmtDate(b.date)}</b><span class="sub">${esc(b.startTime)} · ${b.durationHours} h</span></td>
         <td data-label="Cleaners">${b.agents.length ? `<span class="agent-dots">${b.agents.map((a) => `<span style="--c:${esc(a.color || '#999')}" title="${esc(a.name)}">${initials(a.name)}</span>`).join('')}</span>` : `<span class="muted">${b.agentsRequired || 1} needed</span>`}</td>
         <td data-label="Price">${money(b.price)}</td>
@@ -302,7 +305,7 @@ async function openBooking(id) {
     <div class="d-actions">${A.join('')}</div>
     <dl class="kv">
       <dt>Customer</dt><dd>${esc(b.customer.name)}<br><a href="mailto:${esc(b.customer.email)}">${esc(b.customer.email)}</a> · <a href="tel:${esc(b.customer.phone)}">${esc(b.customer.phone)}</a></dd>
-      <dt>Package</dt><dd>${esc(b.packageName)} · ${money(b.price)}</dd>
+      <dt>Package</dt><dd>${esc(packageName(b))} · ${money(b.price)}</dd>
       <dt>When</dt><dd>${fmtDate(b.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}<br>${esc(b.startTime)} · ${b.durationHours} h</dd>
       <dt>Cleaners</dt><dd>${b.agents.length ? b.agents.map((a) => esc(a.name)).join(', ') : `<span class="muted">Not assigned (${b.agentsRequired || 1} recommended)</span>`}</dd>
       <dt>Address</dt><dd>${esc(addr)}</dd>
@@ -354,7 +357,7 @@ const pickedAgents = (root) => $$('input[name=agent]:checked', root).map((x) => 
 
 function acceptDialog(b) {
   const body = openModal(`Accept ${b.ref}`, `<form class="form">
-    <p class="muted" style="margin:0">${esc(b.packageName)} · ${fmtDate(b.date, { weekday: 'long', day: 'numeric', month: 'long' })} · ${esc(b.startTime)} (${b.durationHours} h)</p>
+    <p class="muted" style="margin:0">${esc(packageName(b))} · ${fmtDate(b.date, { weekday: 'long', day: 'numeric', month: 'long' })} · ${esc(b.startTime)} (${b.durationHours} h)</p>
     ${pickerHtml()}
     <label>Message to customer <small>(optional, added to the confirmation e-mail)</small><textarea name="message" rows="3" placeholder="e.g. Our team will call 30 minutes before arrival."></textarea></label>
     <p class="form-error" hidden></p>
@@ -394,13 +397,13 @@ function bookingForm(b) {
   const times = []; for (let m = 6 * 60; m <= 20 * 60; m += 30) times.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
   const body = openModal(isNew ? 'New booking' : `Modify ${b.ref}`, `<form class="form">
     <fieldset><legend>Service</legend><div class="g3">
-      <label class="span2">Package<select name="packageId" required>${pkgs.map((p) => `<option value="${esc(p.id)}" ${p.id === x.packageId ? 'selected' : ''} data-d="${p.durationHours}" data-n="${p.agentsRequired}" data-p="${p.price}">${esc(p.name)} – ${money(p.price)}</option>`).join('')}</select></label>
+      <label class="span2">Package<select name="packageId" required>${pkgs.map((p) => `<option value="${esc(p.id)}" ${p.id === x.packageId ? 'selected' : ''} data-d="${p.durationHours}" data-n="${p.agentsRequired}" data-p="${p.price}">${esc(localizedValue(p, 'name'))} – ${money(p.price)}</option>`).join('')}</select></label>
       <label>Price <small>(blank = auto)</small><input name="price" type="number" min="0" step="0.01" value="${isNew ? '' : esc(x.price)}"></label>
       <label>Date<input name="date" type="date" required value="${esc(x.date || '')}"></label>
       <label>Start time<select name="startTime" required>${times.map((t) => `<option ${t === (x.startTime || '09:00') ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label>Duration (h)<input name="durationHours" type="number" min="0.5" max="12" step="0.5" value="${esc(x.durationHours || pkgs.find((p) => p.id === x.packageId)?.durationHours || pkgs[0]?.durationHours || 2)}"></label>
     </div>
-    <div class="daypick" style="margin-top:10px">${S.extras.map((e) => `<label><input type="checkbox" name="extras" value="${esc(e.id)}" ${exSel.has(e.id) ? 'checked' : ''}>${esc(e.name)} +${money(e.price)}</label>`).join('')}</div></fieldset>
+    <div class="daypick" style="margin-top:10px">${S.extras.map((e) => `<label><input type="checkbox" name="extras" value="${esc(e.id)}" ${exSel.has(e.id) ? 'checked' : ''}>${esc(localizedValue(e, 'name'))} +${money(e.price)}</label>`).join('')}</div></fieldset>
     <fieldset><legend>Customer</legend><div class="g3">
       <label>Name<input name="c_name" required value="${esc(x.customer.name || '')}"></label>
       <label>E-mail<input name="c_email" type="email" required value="${esc(x.customer.email || '')}"></label>
@@ -509,12 +512,12 @@ async function viewPackages(v) {
   const mg = can('manager');
   v.innerHTML = `<div class="toolbar"><p class="muted" style="margin:0;flex:1">Packages shown on the public website${mg ? '' : ' · view only'}</p>${mg ? `<button class="btn btn-ghost" id="editExtras">Edit extras</button><button class="btn btn-primary" id="addPkg">${icon('plus')}Add package</button>` : ''}</div>
   <div class="cards">${items.map((p) => `<article class="acard" style="--c:${esc(p.color)}">
-    <div class="top"><span class="avatar">${initials(p.name)}</span><div style="flex:1"><h3>${esc(p.name)} ${p.popular ? '⭐' : ''}</h3><span class="muted small">${esc(p.category)} · ${p.durationHours} h · ${p.agentsRequired} cleaner(s)</span></div><b>${money(p.price)}</b></div>
-    <p class="muted small" style="margin:0">${esc(p.tagline)}</p>
-    <div>${p.features.map((f) => `<span class="tag">${esc(f)}</span>`).join('')}</div>
+    <div class="top"><span class="avatar">${initials(localizedValue(p, 'name'))}</span><div style="flex:1"><h3>${esc(localizedValue(p, 'name'))} ${p.popular ? '⭐' : ''}</h3><span class="muted small">${esc(localizedValue(p, 'category'))} · ${p.durationHours} ${getLanguage() === 'ro' ? 'ore' : 'h'} · ${p.agentsRequired} ${getLanguage() === 'ro' ? 'persoane' : 'cleaner(s)'}</span></div><b>${money(p.price)}</b></div>
+    <p class="muted small" style="margin:0">${esc(localizedValue(p, 'tagline'))}</p>
+    <div>${(getLanguage() === 'ro' && p.featuresRo?.length ? p.featuresRo : p.features).map((f) => `<span class="tag">${esc(f)}</span>`).join('')}</div>
     ${p.active === false ? '<span class="tag" style="background:#ffe8e2;color:#b3361b">Hidden from website</span>' : ''}
     ${mg ? `<div class="foot"><button class="btn btn-ghost btn-sm" data-edit="${esc(p.id)}">${icon('edit')}Edit</button><button class="btn btn-danger btn-sm" data-del="${esc(p.id)}">${icon('trash')}</button></div>` : ''}</article>`).join('')}</div>
-  <section class="card" style="margin-top:18px"><div class="card-head"><h2>Extras</h2></div>${extras.map((e) => `<span class="tag">${esc(e.name)} · ${money(e.price)}</span>`).join('')}</section>`;
+  <section class="card" style="margin-top:18px"><div class="card-head"><h2>Extras</h2></div>${extras.map((e) => `<span class="tag">${esc(localizedValue(e, 'name'))} · ${money(e.price)}</span>`).join('')}</section>`;
   if (!mg) return;
   $('#addPkg', v).onclick = () => packageForm(null);
   $('#editExtras', v).onclick = () => extrasForm(extras);
@@ -531,11 +534,15 @@ function packageForm(p) {
   const x = p || { color: '#22c3e6', icon: 'sparkle', category: 'Home', durationHours: 2, agentsRequired: 1, features: [], excludes: [], active: true, order: 99 };
   const body = openModal(p ? `Edit ${p.name}` : 'Add package', `<form class="form"><div class="g3">
     <label class="span2">Name<input name="name" required value="${esc(x.name || '')}"></label><label>Category<input name="category" list="cats" value="${esc(x.category)}"><datalist id="cats"><option>Home</option><option>Commercial</option><option>Specialty</option></datalist></label>
+    <label class="span2">Romanian name<input name="nameRo" value="${esc(x.nameRo || '')}"></label><label>Romanian category<input name="categoryRo" value="${esc(x.categoryRo || '')}"></label>
     <label class="span3">Tagline<input name="tagline" value="${esc(x.tagline || '')}"></label>
+    <label class="span3">Romanian tagline<input name="taglineRo" value="${esc(x.taglineRo || '')}"></label>
     <label>Price<input name="price" type="number" min="0" step="0.01" required value="${esc(x.price ?? '')}"></label><label>Duration (h)<input name="durationHours" type="number" min="0.5" max="10" step="0.5" value="${esc(x.durationHours)}"></label><label>Cleaners needed<input name="agentsRequired" type="number" min="1" max="10" value="${esc(x.agentsRequired)}"></label>
     <label>Colour<input name="color" type="color" value="${esc(x.color)}"></label><label>Icon<select name="icon">${['sparkle', 'bubbles', 'box', 'building', 'leaf', 'home'].map((i) => `<option ${i === x.icon ? 'selected' : ''}>${i}</option>`).join('')}</select></label><label>Display order<input name="order" type="number" min="0" max="999" value="${esc(x.order)}"></label>
     <label class="span3">Included features <small>(one per line)</small><textarea name="features" rows="5">${esc((x.features || []).join('\n'))}</textarea></label>
+    <label class="span3">Included features (Romanian) <small>(one per line)</small><textarea name="featuresRo" rows="5">${esc((x.featuresRo || []).join('\n'))}</textarea></label>
     <label class="span3">Not included <small>(one per line)</small><textarea name="excludes" rows="2">${esc((x.excludes || []).join('\n'))}</textarea></label></div>
+    <label class="span3">Not included (Romanian) <small>(one per line)</small><textarea name="excludesRo" rows="2">${esc((x.excludesRo || []).join('\n'))}</textarea></label>
     <label class="check"><input type="checkbox" name="popular" ${x.popular ? 'checked' : ''}> Highlight as "Most popular"</label>
     <label class="check"><input type="checkbox" name="active" ${x.active !== false ? 'checked' : ''}> Show on website</label>
     <p class="form-error" hidden></p><div class="form-actions"><button type="button" class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-primary" type="submit">Save</button></div></form>`, { wide: true });
@@ -546,13 +553,13 @@ function packageForm(p) {
   });
 }
 function extrasForm(extras) {
-  const row = (e = {}) => `<div class="g3 xrow" style="align-items:end;margin-bottom:6px"><label>Name<input name="n" value="${esc(e.name || '')}"></label><label>Price<input name="p" type="number" min="0" step="0.01" value="${esc(e.price ?? '')}"></label><span><input type="hidden" name="i" value="${esc(e.id || '')}"><button type="button" class="btn btn-danger btn-sm" data-rm>Remove</button></span></div>`;
+  const row = (e = {}) => `<div class="g3 xrow" style="align-items:end;margin-bottom:6px"><label>Name<input name="n" value="${esc(e.name || '')}"></label><label>Romanian name<input name="nr" value="${esc(e.nameRo || '')}"></label><label>Price<input name="p" type="number" min="0" step="0.01" value="${esc(e.price ?? '')}"></label><span><input type="hidden" name="i" value="${esc(e.id || '')}"><button type="button" class="btn btn-danger btn-sm" data-rm>Remove</button></span></div>`;
   const body = openModal('Edit extras', `<form class="form"><div id="xr">${extras.map(row).join('')}</div><button type="button" class="btn btn-ghost btn-sm" id="addX">${icon('plus')}Add extra</button>
     <p class="form-error" hidden></p><div class="form-actions"><button type="button" class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-primary" type="submit">Save extras</button></div></form>`);
   $('#addX', body).onclick = () => $('#xr', body).insertAdjacentHTML('beforeend', row());
   $('#xr', body).onclick = (e) => { if (e.target.closest('[data-rm]')) e.target.closest('.xrow').remove(); };
   onSubmit($('form', body), async (_fd, form) => {
-    const items = $$('.xrow', form).map((r) => ({ id: $('[name=i]', r).value || $('[name=n]', r).value.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24), name: $('[name=n]', r).value, price: $('[name=p]', r).value })).filter((x) => x.name.trim());
+    const items = $$('.xrow', form).map((r) => ({ id: $('[name=i]', r).value || $('[name=n]', r).value.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24), name: $('[name=n]', r).value, nameRo: $('[name=nr]', r).value, price: $('[name=p]', r).value })).filter((x) => x.name.trim());
     await api('/admin/extras', { method: 'PUT', body: { items } }); closeModal(); toast('Extras saved', 'ok'); route();
   });
 }
@@ -680,7 +687,7 @@ async function viewSettings(v) {
     const saved = await api('/admin/settings', { method: 'PUT', body });
     S.settings = saved.business;
     S.currency = saved.business.currency;
-    try { moneyFmt = new Intl.NumberFormat(undefined, { style: 'currency', currency: S.currency }); } catch {}
+    try { moneyFmt = new Intl.NumberFormat(locale(), { style: 'currency', currency: S.currency }); } catch {}
     toast('Business settings saved', 'ok');
     viewSettings(v);
   });
@@ -701,5 +708,12 @@ async function viewProfile(v) {
     if (location.hash === '#/profile' || !location.hash) location.hash = '#/dashboard'; route();
   });
 }
+
+addEventListener('axa-language-change', () => {
+  if (!S.user) return;
+  try { moneyFmt = new Intl.NumberFormat(locale(), { style: 'currency', currency: S.currency }); } catch {}
+  route();
+  if (!S.user.mustChangePassword) pollNotifications();
+});
 
 boot();

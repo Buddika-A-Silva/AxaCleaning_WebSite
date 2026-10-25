@@ -6,11 +6,13 @@ const U = require('./util');
 const A = require('./auth');
 const AV = require('./availability');
 const { sendBookingMail, sendContactMail, mailMode } = require('./mail');
+const { localized, requestLanguage } = require('./i18n');
 
 const { HttpError, uid, nowIso } = U;
 const routes = [];
 const STAFF_OTP_TTL_MS = 10 * 60 * 1000;
 const STAFF_OTP_ATTEMPTS = 5;
+const localizedField = (item, field, language) => language === 'ro' && item[`${field}Ro`] ? item[`${field}Ro`] : item[field];
 function createStaffOtp() {
   const otp = String(crypto.randomInt(0, 100000000)).padStart(8, '0');
   const salt = crypto.randomBytes(16).toString('hex');
@@ -243,9 +245,10 @@ route('POST', '/bookings', async ({ store, body, ip, headers }) => {
     const extras = await resolveExtras(store, body.extras);
     const at = nowIso();
     const booking = {
-      id: uid('bkg_'), ref: newRef(), packageId: pkg.id, packageName: pkg.name, ...when, agentsRequired: pkg.agentsRequired || 1,
-      extras, price: fmtMoney(pkg.price + extras.reduce((s, e) => s + e.price, 0)),
+      id: uid('bkg_'), ref: newRef(), packageId: pkg.id, packageName: localizedField(pkg, 'name', body.language), ...when, agentsRequired: pkg.agentsRequired || 1,
+      extras: extras.map((extra) => ({ ...extra, name: localizedField(extra, 'name', body.language) })), price: fmtMoney(pkg.price + extras.reduce((s, e) => s + e.price, 0)),
       customer: { ...parseCustomer(body.customer), consentAt: at, consentVersion: '1' }, address: parseAddress(body.address),
+      language: body.language === 'ro' ? 'ro' : 'en',
       propertyType: U.str(body.propertyType, { field: 'Property type', max: 40 }) || 'Home',
       bedrooms: U.int(body.bedrooms, { field: 'Bedrooms', max: 20 }), bathrooms: U.int(body.bathrooms, { field: 'Bathrooms', max: 20 }),
       notes: U.str(body.notes, { field: 'Notes', max: 1000 }), internalNotes: '',
@@ -270,23 +273,24 @@ route('POST', '/contact', async ({ store, body, ip }) => {
   const key = ip || 'anon';
   const hits = (contactLimiter.get(key) || []).filter((t) => Date.now() - t < 3600e3);
   if (hits.length >= 5) throw new HttpError(429, 'Too many messages. Please try again later.');
-  contactLimiter.set(key, [...hits, Date.now()]);
   const contact = {
     id: uid('msg_'),
     name: U.str(body.name, { field: 'Name', required: true, min: 2, max: 100 }),
     email: U.email(body.email),
     phone: U.str(body.phone, { field: 'Phone', max: 30 }),
     message: U.str(body.message, { field: 'Message', required: true, min: 10, max: 3000 }),
+    language: body.language === 'ro' ? 'ro' : 'en',
     createdAt: nowIso(),
     status: 'new',
   };
+  contactLimiter.set(key, [...hits, Date.now()]);
   await store.put('contacts', contact);
   const business = await getBusiness(store);
   const mail = await sendContactMail(store, contact, business);
   contact.emailStatus = mail.status;
   await store.put('contacts', contact);
   await notify(store, { type: 'contact_new', title: `New contact message from ${contact.name}`, message: contact.message.slice(0, 140) });
-  return { status: 201, body: { id: contact.id, message: 'Thank you. Your message has been received.', emailStatus: mail.status } };
+  return { status: 201, body: { id: contact.id, message: localized('Thank you. Your message has been received.', contact.language), emailStatus: mail.status } };
 });
 route('GET', '/admin/contacts', { roles: STAFF }, async ({ store, query }) => {
   const all = (await store.list('contacts')).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -640,12 +644,18 @@ function parsePackage(body, existing = {}) {
   const list = (v, f) => (Array.isArray(v) ? v : typeof v === 'string' ? v.split('\n') : f || []).map((s) => String(s).trim()).filter(Boolean).slice(0, 20).map((s) => s.slice(0, 120));
   return {
     name: U.str(body.name ?? existing.name, { field: 'Name', required: true, max: 60 }),
+    nameRo: U.str(body.nameRo ?? existing.nameRo, { field: 'Romanian name', max: 60 }),
     category: U.str(body.category ?? existing.category, { field: 'Category', max: 40 }) || 'Home',
+    categoryRo: U.str(body.categoryRo ?? existing.categoryRo, { field: 'Romanian category', max: 40 }),
     tagline: U.str(body.tagline ?? existing.tagline, { field: 'Tagline', max: 140 }),
+    taglineRo: U.str(body.taglineRo ?? existing.taglineRo, { field: 'Romanian tagline', max: 140 }),
+    features: list(body.features ?? existing.features, []),
+    featuresRo: list(body.featuresRo ?? existing.featuresRo, []),
+    excludes: list(body.excludes ?? existing.excludes, []),
+    excludesRo: list(body.excludesRo ?? existing.excludesRo, []),
     price: U.num(body.price ?? existing.price, { field: 'Price', min: 0 }),
     durationHours: U.num(body.durationHours ?? existing.durationHours ?? 2, { field: 'Duration', min: 0.5, max: 10 }),
     agentsRequired: U.int(body.agentsRequired ?? existing.agentsRequired ?? 1, { field: 'Agents required', min: 1, max: 10, def: 1 }),
-    features: list(body.features, existing.features), excludes: list(body.excludes, existing.excludes),
     color: /^#[0-9a-f]{6}$/i.test(body.color || '') ? body.color : existing.color || '#22c3e6',
     icon: ['sparkle', 'bubbles', 'box', 'building', 'leaf', 'home'].includes(body.icon) ? body.icon : existing.icon || 'sparkle',
     popular: body.popular != null ? !!body.popular : !!existing.popular,
@@ -672,7 +682,7 @@ route('DELETE', '/admin/packages/:id', { roles: MGMT }, async ({ store, user, pa
 });
 route('PUT', '/admin/extras', { roles: MGMT }, async ({ store, user, body }) => {
   if (!Array.isArray(body.items)) throw new HttpError(400, 'items must be a list');
-  const items = body.items.slice(0, 30).map((e) => ({ id: U.str(e.id, { field: 'Extra id', max: 30 }) || uid('x'), name: U.str(e.name, { field: 'Extra name', required: true, max: 60 }), price: U.num(e.price, { field: 'Extra price' }) }));
+  const items = body.items.slice(0, 30).map((e) => ({ id: U.str(e.id, { field: 'Extra id', max: 30 }) || uid('x'), name: U.str(e.name, { field: 'Extra name', required: true, max: 60 }), nameRo: U.str(e.nameRo, { field: 'Romanian extra name', max: 60 }), price: U.num(e.price, { field: 'Extra price' }) }));
   await store.put('settings', { id: 'extras', items }); await audit(store, user, 'extras.update', `${items.length} extras`);
   return { items };
 });
@@ -787,9 +797,10 @@ async function handle({ method, path, query = {}, headers = {}, body, ip }) {
     if (out && out.status && 'body' in out) return out;
     return { status: 200, body: out };
   } catch (e) {
-    if (e instanceof HttpError) return { status: e.status, body: { error: e.message, details: e.details } };
+    const language = requestLanguage(headers);
+    if (e instanceof HttpError) return { status: e.status, body: { error: localized(e.message, language), details: e.details } };
     console.error('[api] unhandled', e);
-    return { status: 500, body: { error: 'Something went wrong on our side. Please try again.' } };
+    return { status: 500, body: { error: localized('Something went wrong on our side. Please try again.', language) } };
   }
 }
 

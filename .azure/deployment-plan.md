@@ -28,9 +28,10 @@ Host the customer-facing AXA Cleaning frontend on the existing Azure Static Web 
 - No `azure.yaml` or `infra/` deployment configuration is present.
 - Both existing SWA GitHub workflows now deploy only static frontend content; no Azure Functions API location is configured.
 - The API uses the shared router locally and an esbuild-generated Deno Edge Function bundle in production. `api/` no longer includes Azure Functions or direct PostgreSQL/Table Storage backends.
+- English and Romanian are supported by the customer frontend and staff portal, with a browser-stored preference, localized API errors and booking e-mail, language-specific dates/currency, and optional Romanian package/extra content fields.
 - Staff accounts remain app-managed in the `users` collection of `axa_private.axa_records`. A separate `axa_private.axa_auth_otps` table stores salted OTP hashes, 10-minute expiry, and an attempt counter; the portal displays issued codes once. Super Admins alone can issue password-reset codes.
 - Production requires `SUPABASE_URL`, a service-role secret, and an `AUTH_SECRET` of at least 32 characters; storage uses PostgREST RPCs.
-- Production seeding requires a compliant `SEED_SUPERADMIN_PASSWORD` (at least 12 characters with letters and numbers); the previously requested `Super@12345` does not meet this rule.
+- Production seeding requires a compliant `SEED_SUPERADMIN_PASSWORD` (at least 12 characters with letters and numbers). The latest owner-provided temporary seed password meets the policy but has not been configured in Supabase; configure it only in the function secret settings.
 - The Supabase dashboard still reports a technical issue. SQL Editor queries work, but the Edge Function secrets screen has not loaded its controls; no function secrets were configured and no function is deployed.
 - Supabase CLI and Deno runtime are not installed locally.
 - SSL enforcement is currently off. User authorized enabling it; Supabase warned this requires a database restart and several minutes of downtime. The dashboard currently reports a technical issue, and the authorized attempt did not change the setting.

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'axa-'));
 process.env.DATA_FILE = path.join(tmp, 'db.json');
 process.env.SEED_DEMO_DATA = 'true';
-process.env.SEED_SUPERADMIN_PASSWORD = 'Super@12345';
+process.env.SEED_SUPERADMIN_PASSWORD = 'TestOnly-Super@12345';
 process.env.AUTH_SECRET = 'test-secret-1234567890-test-secret';
 delete process.env.RESEND_API_KEY;
 delete process.env.MAIL_FROM;
@@ -72,6 +72,20 @@ test('health and public packages', async () => {
   assert.equal(p.status, 200); assert.ok(p.body.packages.length >= 5); assert.ok(p.body.extras.length > 0);
 });
 
+test('Romanian API errors and booking e-mail content follow the selected language', async () => {
+  const invalid = await call('POST', '/contact', { email: 'customer@example.com', message: 'A sufficiently long message.' }, null, { 'Accept-Language': 'ro-RO,ro;q=0.9' });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.error, 'Numele este obligatoriu.');
+  const { render } = require('../api/src/lib/mail.js');
+  const email = render({
+    ref: 'AXA-TEST-RO', language: 'ro', date, startTime: '09:00', durationHours: 2,
+    packageName: 'Pachet test', price: 100, status: 'pending',
+    customer: { name: 'Client test' }, address: {}, extras: [],
+  }, 'received');
+  assert.match(email.text, /Am primit solicitarea ta de rezervare/);
+  assert.match(email.text, /Referință: AXA-TEST-RO/);
+});
+
 test('public availability: calendar and slots', async () => {
   const c = await call('GET', `/availability/calendar?month=${date.slice(0, 7)}&packageId=pkg-deep`);
   assert.equal(c.status, 200); assert.ok(c.body.days.find((d) => d.date === date));
@@ -114,7 +128,7 @@ test('public booking: create + track', async () => {
 
 test('auth: logins, bad password, unauthenticated', async () => {
   assert.equal((await call('POST', '/auth/login', { username: 'superadmin', password: 'wrong' })).status, 401);
-  su = await login('superadmin', 'Super@12345'); mgr = await login('manager', 'Manager@12345'); adm = await login('admin', 'Admin@12345');
+  su = await login('superadmin', 'TestOnly-Super@12345'); mgr = await login('manager', 'Manager@12345'); adm = await login('admin', 'Admin@12345');
   assert.ok(su && mgr && adm);
   assert.equal((await call('GET', '/admin/bookings')).status, 401);
   assert.equal((await call('GET', '/admin/bookings', null, 'garbage.token.here')).status, 401);
@@ -276,9 +290,10 @@ test('manager: agents and packages CRUD, audit', async () => {
   assert.equal(a.status, 201);
   assert.equal((await call('PATCH', `/admin/agents/${a.body.id}`, { active: false }, mgr)).body.active, false);
   assert.equal((await call('DELETE', `/admin/agents/${a.body.id}`, null, mgr)).status, 200);
-  const p = await call('POST', '/admin/packages', { name: 'Window Wash', price: 59, features: 'Inside glass\nFrames', durationHours: 2 }, mgr);
+  const p = await call('POST', '/admin/packages', { name: 'Window Wash', nameRo: 'Spălare geamuri', price: 59, features: 'Inside glass\nFrames', featuresRo: 'Curățare geamuri\nTocuri', durationHours: 2 }, mgr);
   assert.equal(p.status, 201); assert.deepEqual(p.body.features, ['Inside glass', 'Frames']);
-  assert.ok((await call('GET', '/packages')).body.packages.some((x) => x.name === 'Window Wash'));
+  assert.deepEqual(p.body.featuresRo, ['Curățare geamuri', 'Tocuri']);
+  assert.ok((await call('GET', '/packages')).body.packages.some((x) => x.name === 'Window Wash' && x.nameRo === 'Spălare geamuri'));
   assert.equal((await call('DELETE', `/admin/packages/${p.body.id}`, null, mgr)).status, 200);
   const del = await call('DELETE', '/admin/packages/pkg-deep', null, mgr);
   assert.equal(del.body.archived, true, 'packages with bookings are archived');
@@ -312,10 +327,13 @@ test('contact submissions are stored and can be closed by staff', async () => {
   for (let i = 0; i < 5; i++) {
     const result = await call('POST', '/contact', {
       name: 'Contact Customer', email: `contact${i}@example.com`, phone: '',
-      message: `Please contact me about service ${i}.`, website: '',
-    });
+      message: `Please contact me about service ${i}.`, website: '', language: i === 0 ? 'ro' : 'en',
+    }, null, i === 0 ? { 'Accept-Language': 'ro' } : {});
     assert.equal(result.status, 201, JSON.stringify(result.body));
-    if (i === 0) first = result.body;
+    if (i === 0) {
+      first = result.body;
+      assert.equal(first.message, 'Mulțumim. Mesajul tău a fost primit.');
+    }
   }
   assert.equal(first.emailStatus, 'logged');
   assert.equal((await call('POST', '/contact', {
@@ -324,6 +342,7 @@ test('contact submissions are stored and can be closed by staff', async () => {
   const messages = await call('GET', '/admin/contacts?status=all', null, adm);
   assert.equal(messages.status, 200);
   assert.equal(messages.body.total, 5);
+  assert.equal(messages.body.items.find((item) => item.id === first.id).language, 'ro');
   assert.equal((await call('PATCH', `/admin/contacts/${first.id}`, { status: 'closed' }, adm)).body.status, 'closed');
   assert.equal((await call('PATCH', `/admin/contacts/${first.id}`, { status: 'unknown' }, adm)).status, 400);
 });

@@ -1,4 +1,4 @@
-import { api, session } from './common.js';
+import { api, session, t } from './common.js';
 
 if (session.token) {
   api('/auth/me').then(() => location.replace('/admin/portal.html')).catch(() => session.clear());
@@ -12,7 +12,7 @@ form.querySelector('.pw-toggle').addEventListener('click', (e) => {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   err.hidden = true;
-  const btn = form.querySelector('[type=submit]'); btn.disabled = true; btn.textContent = 'Signing in…';
+  const btn = form.querySelector('[type=submit]'); btn.disabled = true; btn.textContent = t('Signing in…');
   try {
     const r = await api('/auth/login', { method: 'POST', body: { username: form.elements.username.value.trim(), password: form.elements.password.value }, anon: true });
     session.set(r.token, r.user, form.elements.remember.checked);
@@ -20,5 +20,5 @@ form.addEventListener('submit', async (e) => {
   } catch (ex) {
     err.textContent = ex.message; err.hidden = false;
     form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake');
-  } finally { btn.disabled = false; btn.textContent = 'Sign in'; }
+  } finally { btn.disabled = false; btn.textContent = t('Sign in'); }
 });

@@ -1,6 +1,7 @@
 const KEY = 'axa_language';
 const translations = {
-  'Main': 'Meniu principal', 'Services': 'Servicii', 'Packages': 'Pachete', 'How it works': 'Cum funcționează',
+  'Main': 'Meniu principal', 'Mobile navigation': 'Navigare mobilă', 'Toggle navigation menu': 'Deschide sau închide meniul de navigare',
+  'Services': 'Servicii', 'Packages': 'Pachete', 'How it works': 'Cum funcționează',
   'FAQ': 'Întrebări frecvente', 'Contact': 'Contact', 'Track booking': 'Urmărește rezervarea',
   'Staff portal': 'Portalul personalului', 'Book now': 'Rezervă acum', 'Track my booking': 'Urmărește rezervarea',
   'Book a clean': 'Rezervă o curățenie', 'Home and commercial cleaning': 'Curățenie rezidențială și comercială',

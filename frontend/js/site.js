@@ -53,7 +53,10 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('[data-clear-compare]')) { state.compare.clear(); syncCompare(); }
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeModal($$('.modal:not([hidden])').pop());
+  if (e.key === 'Escape') {
+    closeModal($$('.modal:not([hidden])').pop());
+    if (burger.getAttribute('aria-expanded') === 'true') closeMenu(true);
+  }
   if (e.key === 'Tab') { // focus trap
     const m = $$('.modal:not([hidden])').pop(); if (!m) return;
     const f = $$('button,a[href],input,select,textarea,[tabindex]:not([tabindex="-1"])', m).filter((x) => !x.disabled && x.offsetParent);
@@ -65,9 +68,31 @@ document.addEventListener('keydown', (e) => {
 
 // ---------------------------------------------------------------- nav, scroll effects
 const nav = $('.nav'); const burger = $('.burger'); const menu = $('.mobile-menu');
-function closeMenu() { burger.setAttribute('aria-expanded', 'false'); menu.classList.remove('open'); menu.setAttribute('aria-hidden', 'true'); }
-burger.addEventListener('click', () => { const o = burger.getAttribute('aria-expanded') !== 'true'; burger.setAttribute('aria-expanded', o); menu.classList.toggle('open', o); menu.setAttribute('aria-hidden', !o); });
-$$('.mobile-menu a[href^="#"]').forEach((a) => a.addEventListener('click', closeMenu));
+function closeMenu(restoreFocus = false) {
+  burger.setAttribute('aria-expanded', 'false');
+  menu.classList.remove('open');
+  menu.setAttribute('aria-hidden', 'true');
+  menu.inert = true;
+  if (restoreFocus) burger.focus();
+}
+function openMenu() {
+  burger.setAttribute('aria-expanded', 'true');
+  menu.classList.add('open');
+  menu.setAttribute('aria-hidden', 'false');
+  menu.inert = false;
+  menu.querySelector('select, a, button')?.focus();
+}
+burger.addEventListener('click', () => {
+  if (burger.getAttribute('aria-expanded') === 'true') closeMenu(true);
+  else openMenu();
+});
+menu.querySelectorAll('a[href^="#"]').forEach((a) => a.addEventListener('click', () => closeMenu()));
+document.addEventListener('click', (e) => {
+  if (burger.getAttribute('aria-expanded') === 'true' && !nav.contains(e.target) && !menu.contains(e.target)) closeMenu();
+});
+addEventListener('resize', () => {
+  if (matchMedia('(min-width: 1101px)').matches && burger.getAttribute('aria-expanded') === 'true') closeMenu();
+});
 const progress = $('.scroll-progress');
 const stepsLine = $('.steps-line i'); const stepsEl = $('.steps');
 const sections = $$('main section[id]');

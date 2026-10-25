@@ -51,16 +51,16 @@
     <button class="btn btn-ghost btn-sm" data-open="track"><svg><use href="#i-search"/></svg><span>Track booking</span></button>
     <a class="btn btn-glass btn-sm" href="/admin/" title="Staff portal"><svg><use href="#i-lock"/></svg><span>Staff portal</span></a>
     <button class="btn btn-primary btn-sm magnetic" data-book>Book now</button>
-    <button class="burger" aria-label="Open menu" aria-expanded="false"><span></span><span></span><span></span></button>
+    <button class="burger" type="button" aria-label="Toggle navigation menu" aria-controls="mobile-navigation" aria-expanded="false"><span></span><span></span><span></span></button>
   </div>
 </header>
-<div class="mobile-menu" aria-hidden="true">
+<nav class="mobile-menu" id="mobile-navigation" aria-label="Mobile navigation" aria-hidden="true" inert>
   <label class="language-control"><span class="sr-only">Language</span><select data-language-select aria-label="Language"><option value="en">English</option><option value="ro">Română</option></select></label>
   <a href="#services">Services</a><a href="#packages">Packages</a><a href="#how">How it works</a><a href="#faq">FAQ</a><a href="#contact">Contact</a>
   <button class="btn btn-ghost" data-open="track"><svg><use href="#i-search"/></svg>Track my booking</button>
   <a class="btn btn-glass" href="/admin/"><svg><use href="#i-lock"/></svg>Staff portal</a>
   <button class="btn btn-primary" data-book>Book a clean</button>
-</div>
+</nav>
 
 <main>
   <!-- HERO -->

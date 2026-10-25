@@ -348,13 +348,14 @@ input.invalid,textarea.invalid{border-color:#e17055;box-shadow:0 0 0 4px rgba(22
 .extra span{flex:1}
 .extra em{font-style:normal;color:var(--ocean)}
 .extra:has(input:checked){border-color:var(--aqua);background:#f0fbff}
-.dt{display:grid;grid-template-columns:1.1fr .9fr;gap:22px}
-.cal{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px}
+.dt{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:22px;min-width:0}
+.dt>*{min-width:0}
+.cal{min-width:0;width:100%;background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px}
 .cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .cal-head b{font-size:1.05rem}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;min-width:0}
 .cal-grid .dow{font-size:.72rem;font-weight:800;color:var(--muted);text-align:center;padding:4px 0;text-transform:uppercase}
-.day{aspect-ratio:1;border:0;border-radius:12px;background:#f4f9fc;font-weight:700;position:relative;transition:.2s;color:var(--navy)}
+.day{min-width:0;aspect-ratio:1;border:0;border-radius:12px;background:#f4f9fc;font-weight:700;position:relative;transition:.2s;color:var(--navy)}
 .day:hover:not([disabled]){background:#e0f5fc;transform:translateY(-2px)}
 .day[disabled]{background:transparent;color:#c3cfdb;cursor:not-allowed}
 .day.blank{visibility:hidden}

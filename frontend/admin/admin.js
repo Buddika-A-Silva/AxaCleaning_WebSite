@@ -569,7 +569,7 @@ async function viewUsers(v) {
     <td data-label="Status">${u.active ? '<span class="status accepted">Active</span>' : '<span class="status cancelled">Disabled</span>'}${u.mustChangePassword ? '<span class="sub">must change password</span>' : ''}</td>
     <td data-label="Last sign-in">${u.lastLoginAt ? ago(u.lastLoginAt) : '<span class="muted">never</span>'}</td>
     <td data-label="Created">${fmtDT(u.createdAt)}<span class="sub">by ${esc(u.createdBy || 'system')}</span></td>
-    <td class="row-actions">${u.canManage && !u.isSelf ? `<button class="icon-btn" title="Edit" data-edit="${esc(u.id)}">${icon('edit')}</button><button class="icon-btn" title="Reset password" data-reset="${esc(u.id)}">${icon('key')}</button><button class="icon-btn" title="Delete" data-del="${esc(u.id)}">${icon('trash')}</button>` : u.isSelf ? '<a class="linklike small" href="#/profile">My account</a>' : '<span class="muted small" title="Only a Super Admin can manage this account">🔒 Protected</span>'}</td></tr>`).join('')}
+    <td class="row-actions">${u.canManage && !u.isSelf ? `<button class="icon-btn" title="Edit" data-edit="${esc(u.id)}">${icon('edit')}</button>${u.canResetPassword ? `<button class="icon-btn" title="Issue one-time reset code" data-reset="${esc(u.id)}">${icon('key')}</button>` : ''}<button class="icon-btn" title="Delete" data-del="${esc(u.id)}">${icon('trash')}</button>` : u.isSelf ? '<a class="linklike small" href="#/profile">My account</a>' : '<span class="muted small" title="Only a Super Admin can manage this account">🔒 Protected</span>'}</td></tr>`).join('')}
   </tbody></table></div></div>`;
   $('#addUser', v).onclick = () => userForm(null);
   v.onclick = async (e) => {
@@ -582,7 +582,6 @@ async function viewUsers(v) {
     }
   };
 }
-const genPw = () => { const c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'; const a = crypto.getRandomValues(new Uint32Array(10)); return [...a].map((n) => c[n % c.length]).join('') + '#' + (a[0] % 90 + 10); };
 const roleOptions = (sel) => ['admin', 'manager', 'superadmin'].filter((r) => S.user.role === 'superadmin' || r !== 'superadmin').map((r) => `<option value="${r}" ${r === sel ? 'selected' : ''}>${ROLE_LABEL[r]}</option>`).join('');
 const ROLE_HELP = '<ul class="small muted" style="margin:0;padding-left:18px"><li><b>Admin</b> – reviews, accepts, modifies, rejects and creates bookings.</li><li><b>Manager</b> – everything an Admin can do, plus users, agents and packages. Cannot touch Super Admin accounts.</li><li><b>Super Admin</b> – unlimited access.</li></ul>';
 function userForm(u) {
@@ -591,23 +590,44 @@ function userForm(u) {
     <label>Username<input name="username" required pattern="[a-zA-Z0-9._-]{3,40}" value="${esc(u?.username || '')}" ${u ? 'disabled' : ''}></label>
     <label>E-mail<input name="email" type="email" value="${esc(u?.email || '')}"></label><label>Phone<input name="phone" value="${esc(u?.phone || '')}"></label>
     <label>Role<select name="role">${roleOptions(u?.role || 'admin')}</select></label>
-    ${u ? `<label class="check" style="align-self:end"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}> Account active</label>` : `<label>Temporary password<span style="display:flex;gap:6px"><input name="password" required minlength="8" value="${genPw()}"><button type="button" class="btn btn-ghost btn-sm" id="gen">New</button></span></label>`}
+    ${u ? `<label class="check" style="align-self:end"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}> Account active</label>` : ''}
     </div>${ROLE_HELP}
-    ${u ? '' : '<label class="check"><input type="checkbox" name="mustChangePassword" checked> Require password change at first sign-in</label><p class="muted small" style="margin:0">Share the username and temporary password with the user securely.</p>'}
+    ${u ? '' : '<p class="muted small" style="margin:0">A one-time sign-in code will be displayed after account creation. Share it securely; it expires in 10 minutes and requires a password change at first sign-in.</p>'}
     <p class="form-error" hidden></p><div class="form-actions"><button type="button" class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-primary" type="submit">${u ? 'Save' : 'Create user'}</button></div></form>`);
-  $('#gen', body)?.addEventListener('click', () => { $('[name=password]', body).value = genPw(); });
   onSubmit($('form', body), async (fd) => {
     if (u) await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { name: fd.get('name'), email: fd.get('email'), phone: fd.get('phone'), role: fd.get('role'), active: fd.get('active') === 'on' } });
-    else await api('/admin/users', { method: 'POST', body: { name: fd.get('name'), username: fd.get('username'), email: fd.get('email'), phone: fd.get('phone'), role: fd.get('role'), password: fd.get('password'), mustChangePassword: fd.get('mustChangePassword') === 'on' } });
-    closeModal(); toast(u ? 'User updated' : `User @${fd.get('username')} created`, 'ok'); route();
+    else {
+      const created = await api('/admin/users', { method: 'POST', body: { name: fd.get('name'), username: fd.get('username'), email: fd.get('email'), phone: fd.get('phone'), role: fd.get('role') } });
+      closeModal(); toast(`User @${fd.get('username')} created`, 'ok');
+      showOtp(created.username, created.otp, created.otpExpiresAt, 'Account created');
+      return;
+    }
+    closeModal(); toast('User updated', 'ok'); route();
   });
 }
 function resetForm(u) {
-  const body = openModal(`Reset password – @${u.username}`, `<form class="form"><label>New temporary password<span style="display:flex;gap:6px"><input name="password" required minlength="8" value="${genPw()}"><button type="button" class="btn btn-ghost btn-sm" id="gen">New</button></span></label>
-    <label class="check"><input type="checkbox" name="mcp" checked> Require change at next sign-in</label><p class="muted small" style="margin:0">The user is signed out of all devices.</p>
-    <p class="form-error" hidden></p><div class="form-actions"><button type="button" class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-primary" type="submit">Reset password</button></div></form>`);
-  $('#gen', body).onclick = () => { $('[name=password]', body).value = genPw(); };
-  onSubmit($('form', body), async (fd) => { await api(`/admin/users/${u.id}/reset-password`, { method: 'POST', body: { password: fd.get('password'), mustChangePassword: fd.get('mcp') === 'on' } }); closeModal(); toast('Password reset', 'ok'); route(); });
+  const body = openModal(`Issue reset code – @${u.username}`, `<div class="form"><p>This signs the user out on all devices and invalidates their current password. A one-time code expires in 10 minutes, can be used once, and requires a new password at sign-in.</p>
+    <p class="form-error" hidden></p><div class="form-actions"><button type="button" class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-primary" id="issueOtp" type="button">Issue one-time code</button></div></div>`);
+  $('#issueOtp', body).onclick = async (e) => {
+    const button = e.currentTarget; button.disabled = true;
+    try {
+      const result = await api(`/admin/users/${u.id}/reset-password`, { method: 'POST', body: {} });
+      closeModal(); toast('Reset code issued', 'ok');
+      showOtp(u.username, result.otp, result.otpExpiresAt, 'Password reset');
+    } catch (error) {
+      const message = $('.form-error', body); message.textContent = error.message; message.hidden = false;
+      button.disabled = false;
+    }
+  };
+}
+function showOtp(username, otp, expiresAt, title) {
+  const body = openModal(title, `<div class="form"><p>Give this one-time sign-in code to <b>@${esc(username)}</b> using a secure channel. It is shown only once, expires ${fmtDT(expiresAt)}, and requires a new password at first sign-in.</p>
+    <p style="text-align:center"><code style="font-size:1.8rem;letter-spacing:.35rem">${esc(otp)}</code></p>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" id="copyOtp">Copy code</button><button type="button" class="btn btn-primary" data-close-modal>Done</button></div></div>`);
+  $('#copyOtp', body).onclick = async () => {
+    try { await navigator.clipboard.writeText(otp); toast('Code copied', 'ok'); }
+    catch { toast('Could not copy the code; select and copy it manually', 'error'); }
+  };
 }
 
 // ====================================================================== activity & profile
@@ -637,10 +657,10 @@ async function viewSettings(v) {
   const result = await api('/admin/settings');
   S.settings = result.business;
   const b = result.business;
-  v.innerHTML = `<div class="banner">${icon('globe')}<span>These settings control the public contact details, currency, and business timezone. SMTP credentials are deliberately kept in server environment settings, never in the browser or database.</span></div>
+  v.innerHTML = `<div class="banner">${icon('globe')}<span>These settings control the public contact details, currency, and business timezone. Resend credentials are deliberately kept in Supabase function secrets, never in the browser or database.</span></div>
   <section class="card"><div class="card-head"><h2>Go-live checklist</h2><span class="tag">${result.ready ? 'Ready' : 'Needs setup'}</span></div>
     <div class="cards">${result.checks.map((c) => `<div class="tag" style="padding:10px 14px;color:${c.ready ? '#087a55' : '#9a5200'};background:${c.ready ? '#e6f8f1' : '#fff3dd'}">${c.ready ? '✓' : '○'} ${esc(c.label)}</div>`).join('')}</div>
-    <p class="muted small">Mail mode: ${esc(result.mail.mode)}${result.mail.hostConfigured ? ' · SMTP host is configured' : ' · SMTP connection is not configured yet'}${result.mail.senderConfigured ? ' · sender set' : ' · sender address still needed'}</p>
+    <p class="muted small">Mail mode: ${esc(result.mail.mode)}${result.mail.apiKeyConfigured ? ' · Resend API key is configured' : ' · Resend API key is not configured yet'}${result.mail.senderConfigured ? ' · sender set' : ' · verified sender address still needed'}</p>
   </section>
   <section class="card"><div class="card-head"><h2>Public business profile</h2></div>
     <form class="form" id="businessSettings"><div class="g2">
@@ -652,8 +672,8 @@ async function viewSettings(v) {
       <label>Timezone offset from UTC (minutes)<input name="timezoneOffsetMinutes" type="number" min="-720" max="840" step="15" value="${esc(b.timezoneOffsetMinutes)}"><small>Example: Sri Lanka Standard Time is UTC+5:30 (330 minutes).</small></label>
     </div><p class="form-error" hidden></p><div class="form-actions"><button class="btn btn-primary" type="submit">Save business settings</button></div></form>
   </section>
-  <section class="card"><div class="card-head"><h2>Azure Communication Services SMTP</h2></div>
-    <p>When the ACS Email SMTP mailbox is ready, configure <code>SMTP_HOST=smtp.azurecomm.net</code>, <code>SMTP_PORT=587</code>, <code>SMTP_SECURE=false</code>, the ACS SMTP username/password, and <code>MAIL_FROM</code> in the API host environment. Then restart/redeploy the API and verify the e-mail checklist above. Do not enter credentials here.</p>
+  <section class="card"><div class="card-head"><h2>Resend e-mail delivery</h2></div>
+    <p>Verify a sending domain in Resend, then configure <code>RESEND_API_KEY</code> and <code>MAIL_FROM</code> as Supabase Edge Function secrets. Set the company reply mailbox above, redeploy the function, and test booking threads and contact messages. Do not enter credentials here.</p>
   </section>`;
   onSubmit($('#businessSettings', v), async (fd) => {
     const body = Object.fromEntries(fd);
@@ -669,7 +689,7 @@ async function viewProfile(v) {
   const u = S.user;
   v.innerHTML = `${u.mustChangePassword ? `<div class="banner">${icon('key')}<span>Please set a new password before continuing.</span></div>` : ''}
   <div class="cols" style="margin-top:0"><section class="card"><div class="card-head"><h2>Change password</h2></div>
-    <form class="form" id="pw" style="max-width:420px"><label>Current password<input name="currentPassword" type="password" required autocomplete="current-password"></label>
+    <form class="form" id="pw" style="max-width:420px">${u.mustChangePassword ? '<p class="muted small">Your one-time sign-in code has been used. Choose a new password to finish signing in.</p>' : '<label>Current password<input name="currentPassword" type="password" required autocomplete="current-password"></label>'}
     <label>New password <small>(8+ characters, letters and numbers)</small><input name="newPassword" type="password" required minlength="8" autocomplete="new-password"></label>
     <label>Confirm new password<input name="confirm" type="password" required autocomplete="new-password"></label><p class="form-error" hidden></p>
     <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-primary" type="submit">Update password</button></div></form></section>

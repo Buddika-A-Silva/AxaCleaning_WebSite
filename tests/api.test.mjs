@@ -11,7 +11,8 @@ process.env.DATA_FILE = path.join(tmp, 'db.json');
 process.env.SEED_DEMO_DATA = 'true';
 process.env.SEED_SUPERADMIN_PASSWORD = 'Super@12345';
 process.env.AUTH_SECRET = 'test-secret-1234567890-test-secret';
-delete process.env.SMTP_HOST;
+delete process.env.RESEND_API_KEY;
+delete process.env.MAIL_FROM;
 const require = createRequire(import.meta.url);
 const server = require('../dev-server.js');
 let base;
@@ -24,8 +25,10 @@ before(async () => {
     ['manager', 'Maya Manager', 'manager', 'Manager@12345'],
     ['admin', 'Adam Admin', 'admin', 'Admin@12345'],
   ]) {
-    const created = await call('POST', '/admin/users', { username, name, role, password, mustChangePassword: false }, suToken);
+    const created = await call('POST', '/admin/users', { username, name, role }, suToken);
     assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.match(created.body.otp, /^\d{8}$/);
+    await claimOtp(username, created.body.otp, password);
   }
 });
 after(() => { server.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
@@ -39,6 +42,18 @@ async function call(method, p, body, token, extraHeaders = {}) {
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 const login = async (u, p) => (await call('POST', '/auth/login', { username: u, password: p })).body.token;
+async function claimOtp(username, otp, newPassword) {
+  const signedIn = await call('POST', '/auth/login', { username, password: otp });
+  assert.equal(signedIn.status, 200, JSON.stringify(signedIn.body));
+  assert.equal(signedIn.body.user.mustChangePassword, true);
+  const blocked = await call('GET', '/admin/stats', null, signedIn.body.token);
+  assert.equal(blocked.status, 403);
+  const changed = await call('POST', '/auth/change-password', { newPassword }, signedIn.body.token);
+  assert.equal(changed.status, 200, JSON.stringify(changed.body));
+  assert.equal(changed.body.user.mustChangePassword, false);
+  assert.equal((await call('POST', '/auth/login', { username, password: otp })).status, 401, 'one-time code cannot be reused');
+  return changed.body.token;
+}
 function futureWorkday(offset = 3) {
   const d = new Date(); d.setUTCDate(d.getUTCDate() + offset);
   while (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
@@ -126,24 +141,30 @@ test('roles: admin limits', async () => {
   assert.equal((await call('GET', '/admin/availability', null, adm)).status, 200);
 });
 
-test('roles: manager cannot touch super admin, can manage others', async () => {
+test('roles: manager cannot touch super admin or reset passwords; can manage others', async () => {
   const users = (await call('GET', '/admin/users', null, mgr)).body.items;
   const suUser = users.find((u) => u.role === 'superadmin');
   assert.equal(suUser.canManage, false);
   assert.equal((await call('PATCH', `/admin/users/${suUser.id}`, { name: 'Hacked' }, mgr)).status, 403);
   assert.equal((await call('DELETE', `/admin/users/${suUser.id}`, null, mgr)).status, 403);
-  assert.equal((await call('POST', `/admin/users/${suUser.id}/reset-password`, { password: 'Abcdefg123' }, mgr)).status, 403);
-  assert.equal((await call('POST', '/admin/users', { name: 'Evil', username: 'evil', role: 'superadmin', password: 'Abcdefg123' }, mgr)).status, 403);
-  const c = await call('POST', '/admin/users', { name: 'New Manager', username: 'mgr2', role: 'manager', password: 'Abcdefg123' }, mgr);
+  assert.equal((await call('POST', `/admin/users/${suUser.id}/reset-password`, {}, mgr)).status, 403);
+  const admUser = users.find((u) => u.username === 'admin');
+  assert.equal((await call('POST', `/admin/users/${admUser.id}/reset-password`, {}, mgr)).status, 403);
+  assert.equal((await call('POST', '/admin/users', { name: 'Evil', username: 'evil', role: 'superadmin' }, mgr)).status, 403);
+  const c = await call('POST', '/admin/users', { name: 'New Manager', username: 'mgr2', role: 'manager' }, mgr);
   assert.equal(c.status, 201);
-  const a = await call('POST', '/admin/users', { name: 'New Admin', username: 'adm2', role: 'admin', password: 'Abcdefg123', mustChangePassword: false }, mgr);
+  assert.match(c.body.otp, /^\d{8}$/);
+  await claimOtp('mgr2', c.body.otp, 'ManagerTwo123');
+  const a = await call('POST', '/admin/users', { name: 'New Admin', username: 'adm2', role: 'admin' }, mgr);
   assert.equal(a.status, 201);
-  assert.equal((await call('POST', '/admin/users', { name: 'Dup', username: 'adm2', role: 'admin', password: 'Abcdefg123' }, mgr)).status, 409);
-  assert.equal((await call('POST', '/admin/users', { name: 'Weak', username: 'weak', role: 'admin', password: 'short' }, mgr)).status, 400);
+  assert.match(a.body.otp, /^\d{8}$/);
+  assert.equal(a.body.mustChangePassword, true);
+  assert.equal((await call('POST', '/admin/users', { name: 'Dup', username: 'adm2', role: 'admin' }, mgr)).status, 409);
+  assert.equal((await call('POST', '/admin/users', { name: 'Weak', username: 'weak', role: 'admin' }, mgr)).status, 201);
   // promoting to superadmin is blocked for managers
   assert.equal((await call('PATCH', `/admin/users/${a.body.id}`, { role: 'superadmin' }, mgr)).status, 403);
   // role change invalidates the user's existing token
-  const t = await login('adm2', 'Abcdefg123');
+  const t = await claimOtp('adm2', a.body.otp, 'AdminTwo123');
   assert.equal((await call('PATCH', `/admin/users/${a.body.id}`, { role: 'manager' }, mgr)).status, 200);
   assert.equal((await call('GET', '/auth/me', null, t)).status, 401);
   assert.equal((await call('DELETE', `/admin/users/${a.body.id}`, null, mgr)).status, 200);
@@ -156,8 +177,18 @@ test('roles: super admin safeguards', async () => {
   const users = (await call('GET', '/admin/users', null, su)).body.items;
   const self = users.find((u) => u.username === 'superadmin');
   assert.equal((await call('DELETE', `/admin/users/${self.id}`, null, su)).status, 400);
-  const s2 = await call('POST', '/admin/users', { name: 'Second SA', username: 'sa2', role: 'superadmin', password: 'Abcdefg123' }, su);
+  const s2 = await call('POST', '/admin/users', { name: 'Second SA', username: 'sa2', role: 'superadmin' }, su);
   assert.equal(s2.status, 201);
+  assert.match(s2.body.otp, /^\d{8}$/);
+  assert.equal((await call('GET', '/admin/users', null, mgr)).body.items.find((u) => u.username === 'manager').canResetPassword, false);
+  const secondToken = await login('sa2', s2.body.otp);
+  assert.ok(secondToken);
+  const reset = await call('POST', `/admin/users/${s2.body.id}/reset-password`, {}, su);
+  assert.equal(reset.status, 200);
+  assert.match(reset.body.otp, /^\d{8}$/);
+  assert.equal((await call('POST', '/auth/login', { username: 'sa2', password: s2.body.otp })).status, 401, 'reset invalidates the previous code');
+  const secondNewToken = await claimOtp('sa2', reset.body.otp, 'SecondSuper123');
+  assert.equal((await call('GET', '/admin/users', null, secondNewToken)).status, 200);
   assert.equal((await call('DELETE', `/admin/users/${s2.body.id}`, null, su)).status, 200);
 });
 
@@ -312,15 +343,15 @@ test('Super Admin business settings control public profile without exposing secr
   const settings = await call('GET', '/admin/settings', null, su);
   assert.equal(settings.body.business.currency, 'AUD');
   assert.ok(settings.body.checks.some((c) => c.id === 'legal' && !c.ready));
-  assert.deepEqual(Object.keys(settings.body.mail).sort(), ['hostConfigured', 'mode', 'senderConfigured']);
+  assert.deepEqual(Object.keys(settings.body.mail).sort(), ['apiKeyConfigured', 'mode', 'senderConfigured']);
 });
 
-test('password change and forced change flag', async () => {
-  const t = await login('mgr2', 'Abcdefg123');
-  assert.equal((await call('GET', '/admin/bookings', null, t)).status, 403, 'forced password change blocks protected APIs');
-  assert.equal((await call('GET', '/auth/me', null, t)).status, 200, 'profile remains accessible to change password');
+test('staff password change revokes existing sessions', async () => {
+  const t = await login('mgr2', 'ManagerTwo123');
+  assert.equal((await call('GET', '/admin/bookings', null, t)).status, 200);
+  assert.equal((await call('GET', '/auth/me', null, t)).status, 200);
   assert.equal((await call('POST', '/auth/change-password', { currentPassword: 'wrong', newPassword: 'Newpass123' }, t)).status, 400);
-  const ok = await call('POST', '/auth/change-password', { currentPassword: 'Abcdefg123', newPassword: 'Newpass123' }, t);
+  const ok = await call('POST', '/auth/change-password', { currentPassword: 'ManagerTwo123', newPassword: 'Newpass123' }, t);
   assert.equal(ok.status, 200);
   assert.equal((await call('GET', '/auth/me', null, t)).status, 401, 'old token revoked');
   assert.equal((await call('GET', '/auth/me', null, ok.body.token)).status, 200);
@@ -334,23 +365,36 @@ test('production configuration rejects insecure launch defaults', async () => {
   );
   assert.throws(
     () => validateProductionConfig({ NODE_ENV: 'production', AUTH_SECRET: 'x'.repeat(32) }),
-    /STORAGE_CONNECTION_STRING/,
+    /SUPABASE_URL and a service-role secret key/,
   );
-  assert.throws(
-    () => validateProductionConfig({
-      NODE_ENV: 'production',
-      AUTH_SECRET: 'x'.repeat(32),
-      STORAGE_CONNECTION_STRING: 'configured',
-      SEED_DEMO_DATA: 'true',
-    }),
-    /SEED_DEMO_DATA/,
-  );
+  assert.throws(() => validateProductionConfig({
+    NODE_ENV: 'production',
+    AUTH_SECRET: 'x'.repeat(32),
+    SUPABASE_URL: 'https://project.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+    SEED_DEMO_DATA: 'true',
+  }), /SEED_DEMO_DATA/);
   assert.doesNotThrow(() => validateProductionConfig({
     NODE_ENV: 'production',
     AUTH_SECRET: 'x'.repeat(32),
-    STORAGE_CONNECTION_STRING: 'configured',
+    SUPABASE_URL: 'https://project.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-key',
     SEED_DEMO_DATA: 'false',
   }));
+  assert.doesNotThrow(() => validateProductionConfig({
+    NODE_ENV: 'production',
+    AUTH_SECRET: 'x'.repeat(32),
+    SUPABASE_URL: 'https://wuhfojchbveaeozyztxs.supabase.co',
+    SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'service-key' }),
+    SEED_DEMO_DATA: 'false',
+  }));
+  assert.throws(() => validateProductionConfig({
+    NODE_ENV: 'production',
+    AUTH_SECRET: 'x'.repeat(32),
+    SUPABASE_URL: 'http://project.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+    SEED_DEMO_DATA: 'false',
+  }), /HTTPS Supabase project URL/);
 });
 
 test('login throttling', async () => {
@@ -368,14 +412,15 @@ test('static routing mirrors staticwebapp.config.json', async () => {
 });
 
 test('production seeding creates the initial admin without demo business data', async () => {
-  const keys = ['NODE_ENV', 'AUTH_SECRET', 'STORAGE_CONNECTION_STRING', 'SEED_DEMO_DATA', 'SEED_SUPERADMIN_PASSWORD', 'SEED_SUPERADMIN_USERNAME', 'COMPANY_NAME', 'COMPANY_EMAIL', 'COMPANY_PHONE', 'SERVICE_AREA', 'CURRENCY', 'TZ_OFFSET_MINUTES'];
+  const keys = ['NODE_ENV', 'AUTH_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_SECRET_KEYS', 'SEED_DEMO_DATA', 'SEED_SUPERADMIN_PASSWORD', 'SEED_SUPERADMIN_USERNAME', 'COMPANY_NAME', 'COMPANY_EMAIL', 'COMPANY_PHONE', 'SERVICE_AREA', 'CURRENCY', 'TZ_OFFSET_MINUTES'];
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   const seedPath = require.resolve('../api/src/lib/seed');
   const cachedSeed = require.cache[seedPath];
   try {
     process.env.NODE_ENV = 'production';
     process.env.AUTH_SECRET = 'p'.repeat(40);
-    process.env.STORAGE_CONNECTION_STRING = 'configured-for-seed-test';
+    process.env.SUPABASE_URL = 'https://project.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-key';
     process.env.SEED_DEMO_DATA = 'false';
     process.env.SEED_SUPERADMIN_PASSWORD = 'ProductionSeed123';
     process.env.SEED_SUPERADMIN_USERNAME = 'launchadmin';

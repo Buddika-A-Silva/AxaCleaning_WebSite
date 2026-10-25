@@ -5,7 +5,7 @@
  * (same subject prefixed "Re:", In-Reply-To = previous message, References = whole chain,
  * Thread-Topic for Outlook). The company mailbox is CC'd on every message and set as Reply-To,
  * so the customer, the company and staff all see one conversation per booking.
- * Without SMTP settings the messages are recorded in the e-mail log only (status "logged").
+ * Without a Resend API key the messages are recorded in the e-mail log only (status "logged").
  */
 const { uid, nowIso, escapeHtml } = require('./util');
 
@@ -14,23 +14,38 @@ const COMPANY_EMAIL = (business) => business?.companyEmail || process.env.COMPAN
 const FROM = (business) => process.env.MAIL_FROM || (COMPANY_EMAIL(business) ? `${COMPANY(business)} <${COMPANY_EMAIL(business)}>` : 'AXA Cleaning <noreply@localhost>');
 const domainOf = (addr) => (String(addr).match(/@([^>\s]+)/) || [])[1] || 'axacleaning.com';
 
-let transporter;
-function getTransport() {
-  if (transporter !== undefined) return transporter;
-  if (!process.env.SMTP_HOST) return (transporter = null);
-  try {
-    const nodemailer = require('nodemailer');
-    transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: String(process.env.SMTP_SECURE || 'false') === 'true',
-      auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
-    });
-  } catch (e) {
-    console.warn('[mail] nodemailer not available:', e.message);
-    transporter = null;
+async function sendWithResend(message, idempotencyKey) {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: JSON.stringify(message),
+  });
+  if (!response.ok) throw new Error(`Resend email API returned HTTP ${response.status}.`);
+}
+
+function resendMessage(message) {
+  const headers = {
+    ...message.headers,
+    'Message-ID': message.messageId,
+  };
+  if (message.inReplyTo) {
+    headers['In-Reply-To'] = message.inReplyTo;
+    headers.References = message.references.join(' ');
   }
-  return transporter;
+  return {
+    from: message.from,
+    to: message.to,
+    ...(message.cc ? { cc: message.cc } : {}),
+    ...(message.replyTo ? { reply_to: message.replyTo } : {}),
+    subject: message.subject,
+    html: message.html,
+    text: message.text,
+    headers,
+  };
 }
 
 const money = (n, currency = process.env.CURRENCY || 'USD') => {
@@ -109,11 +124,14 @@ async function sendBookingMail(store, booking, kind, opts = {}) {
     id: uid('eml_'), bookingId: booking.id, ref: booking.ref, kind, badge, to: msg.to, cc: msg.cc, subject,
     messageId, inReplyTo: msg.inReplyTo || null, references: msg.references || [], text, sentAt: nowIso(), status: 'logged', error: null, by: opts.by || 'system',
   };
-  const t = getTransport();
-  if (t) {
+  if (process.env.RESEND_API_KEY) {
     try {
-      if (!companyEmail || !process.env.MAIL_FROM) throw new Error('Configure the company mailbox and MAIL_FROM before enabling SMTP delivery.');
-      await t.sendMail(msg); record.status = 'sent';
+      if (!companyEmail || !process.env.MAIL_FROM) throw new Error('Configure the company mailbox and verified MAIL_FROM before enabling Resend delivery.');
+      await sendWithResend(
+        resendMessage(msg),
+        `${booking.id}-${(thread?.count || 0) + 1}`,
+      );
+      record.status = 'sent';
     }
     catch (e) { record.status = 'failed'; record.error = String(e.message || e).slice(0, 300); console.error('[mail] send failed', e); }
   }
@@ -128,7 +146,11 @@ async function sendBookingMail(store, booking, kind, opts = {}) {
   return record;
 }
 
-const mailMode = () => (process.env.SMTP_HOST ? 'smtp' : 'log-only');
+const mailMode = () => (
+  process.env.RESEND_API_KEY
+    ? (process.env.MAIL_FROM ? 'resend' : 'misconfigured')
+    : 'log-only'
+);
 
 async function sendContactMail(store, contact, business) {
   const companyEmail = COMPANY_EMAIL(business);
@@ -139,11 +161,16 @@ async function sendContactMail(store, contact, business) {
     id: uid('eml_'), kind: 'contact', contactId: contact.id, to: companyEmail, replyTo: contact.email,
     subject, text, sentAt: nowIso(), status: 'logged', error: null, by: 'public',
   };
-  const t = getTransport();
-  if (t) {
+  if (process.env.RESEND_API_KEY) {
     try {
-      if (!companyEmail || !process.env.MAIL_FROM) throw new Error('Configure the company mailbox and MAIL_FROM before enabling SMTP delivery.');
-      await t.sendMail({ from, to: companyEmail, replyTo: contact.email, subject, text });
+      if (!companyEmail || !process.env.MAIL_FROM) throw new Error('Configure the company mailbox and verified MAIL_FROM before enabling Resend delivery.');
+      await sendWithResend({
+        from,
+        to: companyEmail,
+        reply_to: contact.email,
+        subject,
+        text,
+      }, `contact-${contact.id}`);
       record.status = 'sent';
     } catch (e) {
       record.status = 'failed';

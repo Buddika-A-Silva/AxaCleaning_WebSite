@@ -4,3 +4,5 @@ api/local.settings.json
 .env
 *.log
 .DS_Store
+supabase/functions/axa-api/index.ts
+supabase/functions/.env

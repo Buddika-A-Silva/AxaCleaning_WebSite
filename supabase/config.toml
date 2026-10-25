@@ -1,0 +1,4 @@
+project_id = "wuhfojchbveaeozyztxs"
+
+[functions.axa-api]
+verify_jwt = false

@@ -1,4 +1,6 @@
 // Shared helpers for the staff portal
+import { API_BASE } from '../js/api-config.js';
+
 const KEY = 'axa_staff_session';
 export const session = {
   get data() { try { return JSON.parse(localStorage.getItem(KEY) || sessionStorage.getItem(KEY) || 'null'); } catch { return null; } },
@@ -16,7 +18,7 @@ export async function api(path, { method = 'GET', body, anon = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   // custom header: Azure Static Web Apps may rewrite the standard Authorization header
   if (!anon && session.token) headers['X-Auth-Token'] = session.token;
-  const res = await fetch(`/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+  const res = await fetch(`${API_BASE}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
   if (res.status === 401 && !anon) { session.clear(); location.replace('/admin/'); throw new Error('Session expired'); }
   if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status, details: data.details });

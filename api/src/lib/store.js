@@ -1,8 +1,8 @@
 'use strict';
 /**
- * Tiny document store with three interchangeable back ends:
- *  - Azure Table Storage  (production; set STORAGE_CONNECTION_STRING)
- *  - local JSON file      (local development; DATA_FILE or api/.data/db.json)
+ * Tiny document store with Supabase RPC and local development back ends.
+ *  - Supabase Edge Functions (production; set SUPABASE_URL and service-role key)
+ *  - local JSON file         (local development; DATA_FILE or api/.data/db.json)
  *  - in-memory            (fallback when the file system is read-only)
  * Every record is a plain JSON object with an `id`, grouped by collection name.
  */
@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { clone } = require('./util');
-const { isProductionEnvironment, validateProductionConfig } = require('./config');
+const { isProductionEnvironment, getSupabaseServiceRoleKey, validateProductionConfig } = require('./config');
 
 class MemoryStore {
   constructor() { this.mode = 'memory'; this.data = {}; this.locks = new Map(); }
@@ -18,7 +18,45 @@ class MemoryStore {
   async list(c) { return Object.values(this._col(c)).map(clone); }
   async get(c, id) { return clone(this._col(c)[id] || null); }
   async put(c, obj) { this._col(c)[obj.id] = clone(obj); this._persist(); return obj; }
-  async remove(c, id) { delete this._col(c)[id]; this._persist(); }
+  async remove(c, id) {
+    delete this._col(c)[id];
+    if (c === 'users') delete this._col('auth_otps')[String(id)];
+    this._persist();
+  }
+  async setAuthOtp(userId, otp) { this._col('auth_otps')[String(userId)] = clone(otp); this._persist(); }
+  async getAuthOtp(userId) {
+    const otp = this._col('auth_otps')[String(userId)];
+    if (!otp) return null;
+    if (Date.parse(otp.expiresAt) <= Date.now() || otp.attemptsRemaining <= 0) {
+      delete this._col('auth_otps')[String(userId)];
+      this._persist();
+      return null;
+    }
+    return clone(otp);
+  }
+  async failAuthOtp(userId) {
+    const key = String(userId);
+    const otp = this._col('auth_otps')[key];
+    if (!otp) return 0;
+    otp.attemptsRemaining -= 1;
+    if (otp.attemptsRemaining <= 0 || Date.parse(otp.expiresAt) <= Date.now()) {
+      delete this._col('auth_otps')[key];
+      this._persist();
+      return 0;
+    }
+    this._col('auth_otps')[key] = otp;
+    this._persist();
+    return otp.attemptsRemaining;
+  }
+  async consumeAuthOtp(userId, expectedHash) {
+    const key = String(userId);
+    const otp = await this.getAuthOtp(key);
+    if (!otp || otp.hash !== expectedHash) return false;
+    delete this._col('auth_otps')[key];
+    this._persist();
+    return true;
+  }
+  async deleteAuthOtp(userId) { delete this._col('auth_otps')[String(userId)]; this._persist(); }
   async withLocks(keys, action) {
     const ordered = [...new Set(keys.map(String))].sort();
     const acquire = async (index) => {
@@ -57,81 +95,82 @@ class FileStore extends MemoryStore {
   }
 }
 
-const CHUNK = 30000; // Table Storage string properties are limited to 64 KiB (32K UTF-16 chars)
-
-class TableStore {
-  constructor(connectionString, tableName) {
-    const { TableClient } = require('@azure/data-tables');
-    this.mode = 'azure-table';
-    this.client = TableClient.fromConnectionString(connectionString, tableName);
-    this.lockClient = TableClient.fromConnectionString(connectionString, `${tableName}locks`);
-    this.ready = Promise.all([
-      this.client.createTable().catch((e) => { if (e.statusCode !== 409) throw e; }),
-      this.lockClient.createTable().catch((e) => { if (e.statusCode !== 409) throw e; }),
-    ]);
+class SupabaseRpcStore {
+  constructor(url, serviceRoleKey, fetchImpl = fetch) {
+    this.mode = 'supabase-edge';
+    this.url = url.replace(/\/+$/, '');
+    this.serviceRoleKey = serviceRoleKey;
+    this.fetch = fetchImpl;
   }
-  static encode(c, obj) {
-    const json = JSON.stringify(obj);
-    const entity = { partitionKey: c, rowKey: String(obj.id), chunks: Math.max(1, Math.ceil(json.length / CHUNK)) };
-    for (let i = 0; i < entity.chunks; i++) entity['data' + i] = json.slice(i * CHUNK, (i + 1) * CHUNK);
-    return entity;
+  async _rpc(name, args) {
+    const response = await this.fetch(`${this.url}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: {
+        apikey: this.serviceRoleKey,
+        Authorization: `Bearer ${this.serviceRoleKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(args),
+    });
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`Supabase RPC ${name} failed (${response.status}): ${detail}`);
+    }
+    if (response.status === 204) return null;
+    return response.json();
   }
-  static decode(e) {
-    let json = '';
-    for (let i = 0; i < (e.chunks || 1); i++) json += e['data' + i] || '';
-    return JSON.parse(json);
+  async list(collection) {
+    const rows = await this._rpc('axa_records_list', { p_collection: String(collection) });
+    if (!Array.isArray(rows)) throw new Error('Supabase RPC axa_records_list returned an invalid response.');
+    return rows.map(clone);
   }
-  async list(c) {
-    await this.ready;
-    const out = [];
-    const filter = `PartitionKey eq '${String(c).replace(/'/g, "''")}'`;
-    for await (const e of this.client.listEntities({ queryOptions: { filter } })) out.push(TableStore.decode(e));
-    return out;
+  async get(collection, id) {
+    return clone(await this._rpc('axa_records_get', { p_collection: String(collection), p_id: String(id) }));
   }
-  async get(c, id) {
-    await this.ready;
-    try { return TableStore.decode(await this.client.getEntity(c, String(id))); }
-    catch (e) { if (e.statusCode === 404) return null; throw e; }
-  }
-  async put(c, obj) {
-    await this.ready;
-    await this.client.upsertEntity(TableStore.encode(c, obj), 'Replace');
+  async put(collection, obj) {
+    await this._rpc('axa_records_put', {
+      p_collection: String(collection),
+      p_id: String(obj.id),
+      p_data: obj,
+    });
     return obj;
   }
-  async remove(c, id) {
-    await this.ready;
-    try { await this.client.deleteEntity(c, String(id)); }
-    catch (e) { if (e.statusCode !== 404) throw e; }
+  async remove(collection, id) {
+    await this._rpc('axa_records_remove', { p_collection: String(collection), p_id: String(id) });
+  }
+  async setAuthOtp(userId, otp) {
+    await this._rpc('axa_auth_otp_set', {
+      p_user_id: String(userId),
+      p_salt: otp.salt,
+      p_hash: otp.hash,
+      p_expires_at: otp.expiresAt,
+    });
+  }
+  async getAuthOtp(userId) {
+    return this._rpc('axa_auth_otp_get', { p_user_id: String(userId) });
+  }
+  async failAuthOtp(userId) {
+    return this._rpc('axa_auth_otp_fail', { p_user_id: String(userId) });
+  }
+  async consumeAuthOtp(userId, expectedHash) {
+    return this._rpc('axa_auth_otp_consume', {
+      p_user_id: String(userId),
+      p_expected_hash: expectedHash,
+    });
+  }
+  async deleteAuthOtp(userId) {
+    await this._rpc('axa_auth_otp_delete', { p_user_id: String(userId) });
   }
   async withLocks(keys, action) {
-    await this.ready;
     const acquired = [];
-    const lock = async (name) => {
-      const rowKey = crypto.createHash('sha256').update(name).digest('hex');
+    const acquire = async (name) => {
+      const lockKey = crypto.createHash('sha256').update(name).digest('hex');
       const token = crypto.randomBytes(16).toString('hex');
-      const expiresAt = Date.now() + 5 * 60 * 1000;
       const until = Date.now() + 30000;
       while (Date.now() < until) {
-        try {
-          await this.lockClient.createEntity({ partitionKey: 'locks', rowKey, token, expiresAt });
-          acquired.push({ rowKey, token });
+        if (await this._rpc('axa_store_lock_acquire', { p_lock_key: lockKey, p_token: token })) {
+          acquired.push({ lockKey, token });
           return;
-        } catch (e) {
-          if (e.statusCode !== 409) throw e;
-        }
-        let existing;
-        try { existing = await this.lockClient.getEntity('locks', rowKey); }
-        catch (e) { if (e.statusCode === 404) continue; throw e; }
-        if (Number(existing.expiresAt) < Date.now()) {
-          try {
-            await this.lockClient.updateEntity(
-              { partitionKey: 'locks', rowKey, token, expiresAt },
-              'Replace',
-              { etag: existing.etag, matchConditions: 'IfNotModified' },
-            );
-            acquired.push({ rowKey, token });
-            return;
-          } catch (e) { if (e.statusCode !== 412) throw e; }
         }
         await new Promise((resolve) => setTimeout(resolve, 75 + Math.floor(Math.random() * 75)));
       }
@@ -139,19 +178,14 @@ class TableStore {
       throw new HttpError(503, 'This booking is being updated by another request. Please retry shortly.');
     };
     try {
-      for (const name of [...new Set(keys.map(String))].sort()) await lock(name);
+      for (const name of [...new Set(keys.map(String))].sort()) await acquire(name);
       return await action();
     } finally {
       for (const item of acquired.reverse()) {
-        try {
-          const current = await this.lockClient.getEntity('locks', item.rowKey);
-          if (current.token === item.token) {
-            await this.lockClient.deleteEntity('locks', item.rowKey, {
-              etag: current.etag,
-              matchConditions: 'IfNotModified',
-            });
-          }
-        } catch (e) { if (e.statusCode !== 404 && e.statusCode !== 412) throw e; }
+        await this._rpc('axa_store_lock_release', {
+          p_lock_key: item.lockKey,
+          p_token: item.token,
+        });
       }
     }
   }
@@ -161,15 +195,15 @@ let instance;
 function getStore() {
   validateProductionConfig();
   if (instance) return instance;
-  const conn = process.env.STORAGE_CONNECTION_STRING;
-  if (conn) {
-    instance = new TableStore(conn, process.env.STORAGE_TABLE_NAME || 'axacleaning');
+  const serviceRoleKey = getSupabaseServiceRoleKey();
+  if (process.env.SUPABASE_URL && serviceRoleKey) {
+    instance = new SupabaseRpcStore(process.env.SUPABASE_URL, serviceRoleKey);
   } else {
     const file = process.env.DATA_FILE || path.join(__dirname, '..', '..', '.data', 'db.json');
     try { instance = new FileStore(file); }
     catch (e) {
       if (isProductionEnvironment()) throw new Error(`Production storage is unavailable: ${e.message}`);
-      console.warn('[store] File storage unavailable, using in-memory store. Data will NOT persist. Set STORAGE_CONNECTION_STRING.', e.message);
+      console.warn('[store] File storage unavailable, using in-memory store. Data will NOT persist. Configure Supabase Edge Function secrets.', e.message);
       instance = new MemoryStore();
     }
   }
@@ -178,4 +212,4 @@ function getStore() {
 // test helper
 function setStore(s) { instance = s; }
 
-module.exports = { getStore, setStore, MemoryStore, FileStore, TableStore };
+module.exports = { getStore, setStore, MemoryStore, FileStore, SupabaseRpcStore };

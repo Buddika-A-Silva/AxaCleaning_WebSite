@@ -2,17 +2,15 @@
   "name": "axa-cleaning-api",
   "version": "1.0.0",
   "private": true,
-  "description": "AXA Cleaning booking API (Azure Functions, Node.js v4 programming model)",
-  "main": "src/index.js",
+  "description": "AXA Cleaning booking API for Supabase Edge Functions",
   "scripts": {
-    "start": "func start"
-  },
-  "dependencies": {
-    "@azure/data-tables": "^13.3.0",
-    "@azure/functions": "^4.6.0",
-    "nodemailer": "^6.9.16"
+    "start": "node ../dev-server.js",
+    "build:edge": "esbuild ../supabase/functions/axa-api/entry.ts --bundle --platform=node --format=esm --target=es2022 --outfile=../supabase/functions/axa-api/index.ts --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }

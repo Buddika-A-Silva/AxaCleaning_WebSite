@@ -9,6 +9,14 @@ const { sendBookingMail, sendContactMail, mailMode } = require('./mail');
 
 const { HttpError, uid, nowIso } = U;
 const routes = [];
+const STAFF_OTP_TTL_MS = 10 * 60 * 1000;
+const STAFF_OTP_ATTEMPTS = 5;
+function createStaffOtp() {
+  const otp = String(crypto.randomInt(0, 100000000)).padStart(8, '0');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(otp, salt, 64).toString('hex');
+  return { otp, salt, hash, expiresAt: new Date(Date.now() + STAFF_OTP_TTL_MS).toISOString() };
+}
 const route = (method, pattern, opts, handler) => {
   if (typeof opts === 'function') { handler = opts; opts = {}; }
   const keys = [];
@@ -157,13 +165,13 @@ route('GET', '/admin/settings', { roles: ['superadmin'] }, async ({ store }) => 
     { id: 'service-area', label: 'Service area', ready: Boolean(business.serviceArea) },
     { id: 'packages', label: 'Active service packages', ready: packages.some((p) => p.active !== false) },
     { id: 'agents', label: 'Cleaning team', ready: agents.some((a) => a.active !== false) },
-    { id: 'email', label: 'SMTP settings configured (not delivery-tested)', ready: mailMode() === 'smtp' && Boolean(process.env.MAIL_FROM && business.companyEmail) },
+    { id: 'email', label: 'Resend settings configured (not delivery-tested)', ready: mailMode() === 'resend' && Boolean(business.companyEmail) },
     { id: 'legal', label: 'Privacy notice and terms reviewed (owner/legal action)', ready: false },
-    { id: 'storage', label: 'Persistent Azure Table Storage', ready: store.mode === 'azure-table' },
+    { id: 'storage', label: 'Supabase Edge Function storage', ready: store.mode === 'supabase-edge' },
   ];
   return {
     business,
-    mail: { mode: mailMode(), hostConfigured: Boolean(process.env.SMTP_HOST), senderConfigured: Boolean(process.env.MAIL_FROM) },
+    mail: { mode: mailMode(), apiKeyConfigured: Boolean(process.env.RESEND_API_KEY), senderConfigured: Boolean(process.env.MAIL_FROM) },
     checks,
     ready: checks.every((item) => item.ready),
   };
@@ -313,7 +321,21 @@ route('POST', '/auth/login', async ({ store, body, ip }) => {
   const key = `${ip}|${username}`;
   A.throttle(key);
   const user = (await store.list('users')).find((u) => u.username.toLowerCase() === username);
-  if (!user || user.active === false || !A.verifyPassword(body.password || '', user.salt, user.passwordHash)) {
+  let authenticated = !!user && user.active !== false && A.verifyPassword(body.password || '', user.salt, user.passwordHash);
+  if (!authenticated && user && user.active !== false) {
+    const otp = await store.getAuthOtp(user.id);
+    if (otp && A.verifyPassword(body.password || '', otp.salt, otp.hash)) {
+      authenticated = await store.consumeAuthOtp(user.id, otp.hash);
+      if (authenticated) {
+        user.salt = null;
+        user.passwordHash = null;
+        user.mustChangePassword = true;
+      }
+    } else if (otp) {
+      await store.failAuthOtp(user.id);
+    }
+  }
+  if (!authenticated) {
     A.recordFailure(key);
     throw new HttpError(401, 'Invalid username or password');
   }
@@ -325,14 +347,15 @@ route('POST', '/auth/login', async ({ store, body, ip }) => {
 });
 route('GET', '/auth/me', { roles: STAFF }, async ({ user }) => ({ user: A.publicUser(user) }));
 route('POST', '/auth/change-password', { roles: STAFF }, async ({ store, user, body }) => {
-  if (!A.verifyPassword(body.currentPassword || '', user.salt, user.passwordHash)) throw new HttpError(400, 'Current password is incorrect');
+  if (!user.mustChangePassword && !A.verifyPassword(body.currentPassword || '', user.salt, user.passwordHash)) throw new HttpError(400, 'Current password is incorrect');
   A.checkPasswordPolicy(body.newPassword);
-  if (body.newPassword === body.currentPassword) throw new HttpError(400, 'New password must be different from the current one');
+  if (!user.mustChangePassword && body.newPassword === body.currentPassword) throw new HttpError(400, 'New password must be different from the current one');
   const { salt, hash } = A.hashPassword(body.newPassword);
   user.salt = salt; user.passwordHash = hash;
   user.mustChangePassword = false;
   user.tokenVersion = (user.tokenVersion || 0) + 1;
   await store.put('users', user);
+  await store.deleteAuthOtp(user.id);
   await audit(store, user, 'password.change', 'Changed own password');
   return { ...A.signToken(user), user: A.publicUser(user) };
 });
@@ -657,7 +680,7 @@ route('PUT', '/admin/extras', { roles: MGMT }, async ({ store, user, body }) => 
 // --------------------------------------------------------------- users
 route('GET', '/admin/users', { roles: MGMT }, async ({ store, user }) => ({
   items: (await store.list('users')).sort((a, b) => A.ROLE_RANK[b.role] - A.ROLE_RANK[a.role] || a.username.localeCompare(b.username))
-    .map((u) => ({ ...A.publicUser(u), canManage: A.canManageUser(user, u), isSelf: u.id === user.id })),
+    .map((u) => ({ ...A.publicUser(u), canManage: A.canManageUser(user, u), canResetPassword: user.role === 'superadmin' && u.id !== user.id, isSelf: u.id === user.id })),
 }));
 route('POST', '/admin/users', { roles: MGMT }, async ({ store, user, body }) => {
   const role = body.role;
@@ -665,15 +688,16 @@ route('POST', '/admin/users', { roles: MGMT }, async ({ store, user, body }) => 
   const username = U.str(body.username, { field: 'Username', required: true, min: 3, max: 40 }).toLowerCase();
   if (!/^[a-z0-9._-]+$/.test(username)) throw new HttpError(400, 'Username may contain letters, numbers, dot, dash and underscore');
   if ((await store.list('users')).some((u) => u.username === username)) throw new HttpError(409, 'Username already exists');
-  A.checkPasswordPolicy(body.password);
-  const { salt, hash } = A.hashPassword(body.password);
+  const otp = createStaffOtp();
   const u = {
     id: uid('usr_'), username, name: U.str(body.name, { field: 'Name', required: true, max: 80 }), email: U.email(body.email, 'Email', false),
-    phone: U.str(body.phone, { field: 'Phone', max: 30 }), role, salt, passwordHash: hash, active: true,
-    mustChangePassword: body.mustChangePassword !== false, tokenVersion: 0, createdAt: nowIso(), createdBy: user.username,
+    phone: U.str(body.phone, { field: 'Phone', max: 30 }), role, salt: null, passwordHash: null, active: true,
+    mustChangePassword: true, tokenVersion: 0, createdAt: nowIso(), createdBy: user.username,
   };
-  await store.put('users', u); await audit(store, user, 'user.create', `${u.username} (${A.ROLE_LABEL[role]})`);
-  return { status: 201, body: A.publicUser(u) };
+  await store.put('users', u);
+  await store.setAuthOtp(u.id, { salt: otp.salt, hash: otp.hash, expiresAt: otp.expiresAt, attemptsRemaining: STAFF_OTP_ATTEMPTS });
+  await audit(store, user, 'user.create', `${u.username} (${A.ROLE_LABEL[role]})`);
+  return { status: 201, body: { ...A.publicUser(u), otp: otp.otp, otpExpiresAt: otp.expiresAt } };
 });
 async function loadManagedUser(store, actor, id) {
   const target = await store.get('users', id);
@@ -694,27 +718,33 @@ route('PATCH', '/admin/users/:id', { roles: MGMT }, async ({ store, user, params
   if (nextRole !== t.role && !A.canAssignRole(user, nextRole)) throw new HttpError(403, `You cannot assign the ${A.ROLE_LABEL[nextRole] || nextRole} role`);
   if (t.id === user.id && (nextRole !== t.role || !nextActive)) throw new HttpError(400, 'You cannot change your own role or deactivate yourself');
   await assertNotLastSuperadmin(store, t, nextRole, nextActive);
+  const accessChanged = nextRole !== t.role || nextActive !== (t.active !== false);
   const before = `${t.role}/${t.active !== false}`;
   if (body.name != null) t.name = U.str(body.name, { field: 'Name', required: true, max: 80 });
   if (body.email != null) t.email = U.email(body.email, 'Email', false);
   if (body.phone != null) t.phone = U.str(body.phone, { field: 'Phone', max: 30 });
-  if (nextRole !== t.role || nextActive !== (t.active !== false)) t.tokenVersion = (t.tokenVersion || 0) + 1;
+  if (accessChanged) t.tokenVersion = (t.tokenVersion || 0) + 1;
   t.role = nextRole; t.active = nextActive;
-  await store.put('users', t); await audit(store, user, 'user.update', `${t.username} ${before} → ${t.role}/${t.active}`);
+  await store.put('users', t);
+  if (accessChanged) await store.deleteAuthOtp(t.id);
+  await audit(store, user, 'user.update', `${t.username} ${before} → ${t.role}/${t.active}`);
   return A.publicUser(t);
 });
-route('POST', '/admin/users/:id/reset-password', { roles: MGMT }, async ({ store, user, params, body }) => {
+route('POST', '/admin/users/:id/reset-password', { roles: ['superadmin'] }, async ({ store, user, params }) => {
   const t = await loadManagedUser(store, user, params.id);
-  A.checkPasswordPolicy(body.password);
-  const { salt, hash } = A.hashPassword(body.password);
-  Object.assign(t, { salt, passwordHash: hash, mustChangePassword: body.mustChangePassword !== false, tokenVersion: (t.tokenVersion || 0) + 1 });
-  await store.put('users', t); await audit(store, user, 'user.reset-password', t.username);
-  return { ok: true };
+  if (t.id === user.id) throw new HttpError(400, 'Use My account to change your own password');
+  const otp = createStaffOtp();
+  Object.assign(t, { salt: null, passwordHash: null, mustChangePassword: true, tokenVersion: (t.tokenVersion || 0) + 1 });
+  await store.put('users', t);
+  await store.setAuthOtp(t.id, { salt: otp.salt, hash: otp.hash, expiresAt: otp.expiresAt, attemptsRemaining: STAFF_OTP_ATTEMPTS });
+  await audit(store, user, 'user.reset-password', t.username);
+  return { ok: true, otp: otp.otp, otpExpiresAt: otp.expiresAt };
 });
 route('DELETE', '/admin/users/:id', { roles: MGMT }, async ({ store, user, params }) => {
   const t = await loadManagedUser(store, user, params.id);
   if (t.id === user.id) throw new HttpError(400, 'You cannot delete your own account');
   await assertNotLastSuperadmin(store, t, null, false);
+  await store.deleteAuthOtp(t.id);
   await store.remove('users', t.id); await audit(store, user, 'user.delete', t.username);
   return { ok: true };
 });

@@ -7,12 +7,27 @@ const A = require('./auth');
 const AV = require('./availability');
 const { sendBookingMail, sendContactMail, mailMode } = require('./mail');
 const { localized, requestLanguage } = require('./i18n');
+const { setBusinessSettings } = require('./runtime-config');
 
 const { HttpError, uid, nowIso } = U;
 const routes = [];
 const STAFF_OTP_TTL_MS = 10 * 60 * 1000;
 const STAFF_OTP_ATTEMPTS = 5;
+const SERVICE_AREA_SCOPES = ['local', 'regional', 'nationwide', 'worldwide', 'custom'];
+const SERVICE_AREA_LABELS = {
+  local: { en: 'Local', ro: 'Local' },
+  regional: { en: 'Regional', ro: 'Regional' },
+  nationwide: { en: 'Nationwide', ro: 'La nivel național' },
+  worldwide: { en: 'Worldwide', ro: 'La nivel mondial' },
+  custom: { en: '', ro: '' },
+};
 const localizedField = (item, field, language) => language === 'ro' && item[`${field}Ro`] ? item[`${field}Ro`] : item[field];
+function serviceAreaLabel(business, language) {
+  const scope = SERVICE_AREA_SCOPES.includes(business.serviceAreaScope) ? business.serviceAreaScope : 'custom';
+  const details = business.serviceAreaDetails || business.serviceArea || '';
+  const label = SERVICE_AREA_LABELS[scope][language];
+  return label ? (details ? `${label}: ${details}` : label) : details;
+}
 function createStaffOtp() {
   const otp = String(crypto.randomInt(0, 100000000)).padStart(8, '0');
   const salt = crypto.randomBytes(16).toString('hex');
@@ -43,12 +58,7 @@ async function getBusiness(store) {
 }
 async function applyBusinessSettings(store) {
   const business = await getBusiness(store);
-  process.env.COMPANY_NAME = business.companyName;
-  process.env.COMPANY_EMAIL = business.companyEmail;
-  process.env.COMPANY_PHONE = business.phone;
-  process.env.SERVICE_AREA = business.serviceArea;
-  process.env.CURRENCY = business.currency;
-  process.env.TZ_OFFSET_MINUTES = String(business.timezoneOffsetMinutes);
+  setBusinessSettings(business);
   return business;
 }
 function parseBusinessSettings(body, existing) {
@@ -57,12 +67,17 @@ function parseBusinessSettings(body, existing) {
   const currency = U.str(body.currency ?? existing.currency, { field: 'Currency', required: true, min: 3, max: 3 }).toUpperCase();
   try { new Intl.NumberFormat('en', { style: 'currency', currency }).format(1); }
   catch { throw new HttpError(400, 'Currency must be a supported three-letter ISO currency code'); }
+  const serviceAreaScope = U.str(body.serviceAreaScope ?? existing.serviceAreaScope ?? 'custom', { field: 'Service area scope', max: 20 }).toLowerCase();
+  if (!SERVICE_AREA_SCOPES.includes(serviceAreaScope)) throw new HttpError(400, 'Service area scope is invalid');
+  const serviceAreaDetails = U.str(body.serviceAreaDetails ?? body.serviceArea ?? existing.serviceAreaDetails ?? existing.serviceArea, { field: 'Service area details', max: 300 });
   return {
     id: 'business',
     companyName,
     companyEmail,
     phone: U.str(body.phone ?? existing.phone, { field: 'Phone', max: 30 }),
-    serviceArea: U.str(body.serviceArea ?? existing.serviceArea, { field: 'Service area', max: 300 }),
+    serviceAreaScope,
+    serviceAreaDetails,
+    serviceArea: serviceAreaDetails,
     currency,
     timezoneOffsetMinutes: U.int(body.timezoneOffsetMinutes ?? existing.timezoneOffsetMinutes, { field: 'Timezone offset (minutes)', min: -720, max: 840, def: 330 }),
     updatedAt: nowIso(),
@@ -164,11 +179,10 @@ route('GET', '/admin/settings', { roles: ['superadmin'] }, async ({ store }) => 
   const checks = [
     { id: 'company-email', label: 'Company reply mailbox', ready: Boolean(business.companyEmail) },
     { id: 'company-phone', label: 'Public phone number', ready: Boolean(business.phone) },
-    { id: 'service-area', label: 'Service area', ready: Boolean(business.serviceArea) },
+    { id: 'service-area', label: 'Service area', ready: Boolean(business.serviceAreaDetails || business.serviceArea || business.serviceAreaScope === 'worldwide') },
     { id: 'packages', label: 'Active service packages', ready: packages.some((p) => p.active !== false) },
     { id: 'agents', label: 'Cleaning team', ready: agents.some((a) => a.active !== false) },
     { id: 'email', label: 'Resend settings configured (not delivery-tested)', ready: mailMode() === 'resend' && Boolean(business.companyEmail) },
-    { id: 'legal', label: 'Privacy notice and terms reviewed (owner/legal action)', ready: false },
     { id: 'storage', label: 'Supabase Edge Function storage', ready: store.mode === 'supabase-edge' },
   ];
   return {
@@ -186,10 +200,10 @@ route('PUT', '/admin/settings', { roles: ['superadmin'] }, async ({ store, user,
   return { business: settings };
 });
 
-route('GET', '/packages', async ({ store }) => {
+route('GET', '/packages', async ({ store, headers }) => {
   const business = await getBusiness(store);
   const packages = (await store.list('packages')).filter((p) => p.active !== false).sort((a, b) => (a.order || 0) - (b.order || 0));
-  return { currency: business.currency, company: { name: business.companyName, email: business.companyEmail, phone: business.phone, serviceArea: business.serviceArea }, packages, extras: await getExtras(store), workStart: U.fromMin(AV.WORK_START), workEnd: U.fromMin(AV.WORK_END) };
+  return { currency: business.currency, company: { name: business.companyName, email: business.companyEmail, phone: business.phone, serviceArea: serviceAreaLabel(business, requestLanguage(headers)) }, packages, extras: await getExtras(store), workStart: U.fromMin(AV.WORK_START), workEnd: U.fromMin(AV.WORK_END) };
 });
 
 route('GET', '/availability/calendar', async ({ store, query }) => {
@@ -600,24 +614,24 @@ function parseAgent(body, existing = {}) {
     active: body.active != null ? !!body.active : existing.active !== false,
   };
 }
-route('POST', '/admin/agents', { roles: MGMT }, async ({ store, user, body }) => {
+route('POST', '/admin/agents', { roles: STAFF }, async ({ store, user, body }) => {
   const a = { id: uid('agt_'), ...parseAgent(body), leaves: [], createdAt: nowIso() };
   await store.put('agents', a); await audit(store, user, 'agent.create', a.name);
   return { status: 201, body: a };
 });
-route('PATCH', '/admin/agents/:id', { roles: MGMT }, async ({ store, user, params, body }) => {
+route('PATCH', '/admin/agents/:id', { roles: STAFF }, async ({ store, user, params, body }) => {
   const a = await store.get('agents', params.id); if (!a) throw new HttpError(404, 'Agent not found');
   Object.assign(a, parseAgent(body, a)); await store.put('agents', a); await audit(store, user, 'agent.update', a.name);
   return a;
 });
-route('DELETE', '/admin/agents/:id', { roles: MGMT }, async ({ store, user, params }) => {
+route('DELETE', '/admin/agents/:id', { roles: STAFF }, async ({ store, user, params }) => {
   const a = await store.get('agents', params.id); if (!a) throw new HttpError(404, 'Agent not found');
   const future = (await store.list('bookings')).filter((b) => b.status === 'accepted' && b.date >= U.today() && b.agentIds.includes(a.id));
   if (future.length) throw new HttpError(409, `${a.name} is assigned to ${future.length} upcoming booking(s): ${future.map((b) => b.ref).join(', ')}. Reassign them or deactivate the agent instead.`);
   await store.remove('agents', a.id); await audit(store, user, 'agent.delete', a.name);
   return { ok: true };
 });
-route('POST', '/admin/agents/:id/leave', { roles: MGMT }, async ({ store, user, params, body }) => {
+route('POST', '/admin/agents/:id/leave', { roles: STAFF }, async ({ store, user, params, body }) => {
   const a = await store.get('agents', params.id); if (!a) throw new HttpError(404, 'Agent not found');
   const from = body.date || body.from; const to = body.to || from;
   if (!U.isDate(from) || !U.isDate(to) || to < from) throw new HttpError(400, 'Valid date (or from/to range) required');
@@ -632,7 +646,7 @@ route('POST', '/admin/agents/:id/leave', { roles: MGMT }, async ({ store, user, 
   await store.put('agents', a); await audit(store, user, 'agent.leave', `${a.name} ${from}${to !== from ? '…' + to : ''}`);
   return { agent: a, warnings: clashes.length ? [`${a.name} is still assigned to ${clashes.join(', ')} — reassign these bookings.`] : [] };
 });
-route('DELETE', '/admin/agents/:id/leave/:date', { roles: MGMT }, async ({ store, user, params }) => {
+route('DELETE', '/admin/agents/:id/leave/:date', { roles: STAFF }, async ({ store, user, params }) => {
   const a = await store.get('agents', params.id); if (!a) throw new HttpError(404, 'Agent not found');
   a.leaves = (a.leaves || []).filter((l) => l.date !== params.date);
   await store.put('agents', a); await audit(store, user, 'agent.leave.remove', `${a.name} ${params.date}`);
@@ -664,23 +678,23 @@ function parsePackage(body, existing = {}) {
   };
 }
 route('GET', '/admin/packages', { roles: STAFF }, async ({ store }) => ({ items: (await store.list('packages')).sort((a, b) => (a.order || 0) - (b.order || 0)), extras: await getExtras(store) }));
-route('POST', '/admin/packages', { roles: MGMT }, async ({ store, user, body }) => {
+route('POST', '/admin/packages', { roles: STAFF }, async ({ store, user, body }) => {
   const p = { id: uid('pkg_'), ...parsePackage(body), createdAt: nowIso() };
   await store.put('packages', p); await audit(store, user, 'package.create', p.name);
   return { status: 201, body: p };
 });
-route('PATCH', '/admin/packages/:id', { roles: MGMT }, async ({ store, user, params, body }) => {
+route('PATCH', '/admin/packages/:id', { roles: STAFF }, async ({ store, user, params, body }) => {
   const p = await store.get('packages', params.id); if (!p) throw new HttpError(404, 'Package not found');
   Object.assign(p, parsePackage(body, p)); await store.put('packages', p); await audit(store, user, 'package.update', p.name);
   return p;
 });
-route('DELETE', '/admin/packages/:id', { roles: MGMT }, async ({ store, user, params }) => {
+route('DELETE', '/admin/packages/:id', { roles: STAFF }, async ({ store, user, params }) => {
   const p = await store.get('packages', params.id); if (!p) throw new HttpError(404, 'Package not found');
   if ((await store.list('bookings')).some((b) => b.packageId === p.id)) { p.active = false; await store.put('packages', p); await audit(store, user, 'package.archive', p.name); return { archived: true }; }
   await store.remove('packages', p.id); await audit(store, user, 'package.delete', p.name);
   return { ok: true };
 });
-route('PUT', '/admin/extras', { roles: MGMT }, async ({ store, user, body }) => {
+route('PUT', '/admin/extras', { roles: STAFF }, async ({ store, user, body }) => {
   if (!Array.isArray(body.items)) throw new HttpError(400, 'items must be a list');
   const items = body.items.slice(0, 30).map((e) => ({ id: U.str(e.id, { field: 'Extra id', max: 30 }) || uid('x'), name: U.str(e.name, { field: 'Extra name', required: true, max: 60 }), nameRo: U.str(e.nameRo, { field: 'Romanian extra name', max: 60 }), price: U.num(e.price, { field: 'Extra price' }) }));
   await store.put('settings', { id: 'extras', items }); await audit(store, user, 'extras.update', `${items.length} extras`);

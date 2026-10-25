@@ -1,11 +1,11 @@
 import process from 'node:process';
 import { Buffer } from 'node:buffer';
 
-Object.assign(process.env, Deno.env.toObject());
 Object.assign(globalThis, { Buffer });
 
 const { handle } = await import('../../../api/src/lib/router.js');
 const functionPrefix = '/functions/v1/axa-api';
+const functionNamePrefix = '/axa-api';
 const defaultOrigins = [
   'https://yellow-mud-06abc5e10.6.azurestaticapps.net',
   'http://localhost:4280',
@@ -18,7 +18,7 @@ const allowedOrigins = new Set([
 const corsHeaders = (origin: string | null) => ({
   ...(origin && allowedOrigins.has(origin) ? { 'Access-Control-Allow-Origin': origin } : {}),
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key, X-Auth-Token',
+  'Access-Control-Allow-Headers': 'Accept-Language, Authorization, Content-Type, Idempotency-Key, X-Auth-Token',
   'Access-Control-Max-Age': '86400',
   Vary: 'Origin',
 });
@@ -32,9 +32,10 @@ Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
   const url = new URL(request.url);
-  const path = url.pathname.startsWith(functionPrefix)
-    ? url.pathname.slice(functionPrefix.length) || '/'
-    : url.pathname;
+  const prefix = url.pathname.startsWith(functionPrefix)
+    ? functionPrefix
+    : url.pathname.startsWith(functionNamePrefix) ? functionNamePrefix : '';
+  const path = prefix ? url.pathname.slice(prefix.length) || '/' : url.pathname;
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => { headers[key.toLowerCase()] = value; });
   let body = null;

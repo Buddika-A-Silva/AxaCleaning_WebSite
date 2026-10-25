@@ -1,4 +1,4 @@
-import { api, session, esc, $, $$, getLanguage } from './common.js';
+import { api, session, esc, $, $$, getLanguage, t } from './common.js';
 
 // ====================================================================== state & helpers
 const RANK = { admin: 1, manager: 2, superadmin: 3 };
@@ -454,8 +454,8 @@ async function viewAgents(v) {
   const [{ items }, bd] = await Promise.all([api('/admin/agents'), api(`/admin/availability?days=7`)]);
   S.agents = items;
   const week = Object.fromEntries(bd.agents.map((a) => [a.id, a.days]));
-  const mg = can('manager');
-  v.innerHTML = `<div class="toolbar"><p class="muted" style="margin:0;flex:1">${items.filter((a) => a.active !== false).length} active of ${items.length} agents${mg ? '' : ' · view only – ask a manager to change agents'}</p>${mg ? `<button class="btn btn-primary" id="addAgent">${icon('plus')}Add agent</button>` : ''}</div>
+  const mg = can('admin');
+  v.innerHTML = `<div class="toolbar"><p class="muted" style="margin:0;flex:1">${items.filter((a) => a.active !== false).length} active of ${items.length} agents${mg ? '' : ' · view only – ask an Admin to change agents'}</p>${mg ? `<button class="btn btn-primary" id="addAgent">${icon('plus')}Add agent</button>` : ''}</div>
   <div class="cards">${items.map((a) => `<article class="acard" style="--c:${esc(a.color)}">
     <div class="top ${a.active === false ? 'inactive' : ''}"><span class="avatar">${initials(a.name)}</span><div style="flex:1;min-width:0"><h3>${esc(a.name)}</h3><span class="muted small">${esc(a.phone || '')}${a.email ? ` · ${esc(a.email)}` : ''}</span></div>${a.active === false ? '<span class="tag">Inactive</span>' : ''}</div>
     <div>${(a.skills || []).map((s) => `<span class="tag">${esc(s)}</span>`).join('')}</div>
@@ -509,7 +509,7 @@ function leaveForm(a) {
 async function viewPackages(v) {
   const { items, extras } = await api('/admin/packages');
   S.packages = items; S.extras = extras;
-  const mg = can('manager');
+  const mg = can('admin');
   v.innerHTML = `<div class="toolbar"><p class="muted" style="margin:0;flex:1">Packages shown on the public website${mg ? '' : ' · view only'}</p>${mg ? `<button class="btn btn-ghost" id="editExtras">Edit extras</button><button class="btn btn-primary" id="addPkg">${icon('plus')}Add package</button>` : ''}</div>
   <div class="cards">${items.map((p) => `<article class="acard" style="--c:${esc(p.color)}">
     <div class="top"><span class="avatar">${initials(localizedValue(p, 'name'))}</span><div style="flex:1"><h3>${esc(localizedValue(p, 'name'))} ${p.popular ? '⭐' : ''}</h3><span class="muted small">${esc(localizedValue(p, 'category'))} · ${p.durationHours} ${getLanguage() === 'ro' ? 'ore' : 'h'} · ${p.agentsRequired} ${getLanguage() === 'ro' ? 'persoane' : 'cleaner(s)'}</span></div><b>${money(p.price)}</b></div>
@@ -590,7 +590,7 @@ async function viewUsers(v) {
   };
 }
 const roleOptions = (sel) => ['admin', 'manager', 'superadmin'].filter((r) => S.user.role === 'superadmin' || r !== 'superadmin').map((r) => `<option value="${r}" ${r === sel ? 'selected' : ''}>${ROLE_LABEL[r]}</option>`).join('');
-const ROLE_HELP = '<ul class="small muted" style="margin:0;padding-left:18px"><li><b>Admin</b> – reviews, accepts, modifies, rejects and creates bookings.</li><li><b>Manager</b> – everything an Admin can do, plus users, agents and packages. Cannot touch Super Admin accounts.</li><li><b>Super Admin</b> – unlimited access.</li></ul>';
+const ROLE_HELP = () => `<ul class="small muted" style="margin:0;padding-left:18px"><li><b>${t('Admin')}</b> – ${t('Reviews, accepts, modifies, rejects and creates bookings; manages packages, extras, cleaning-agent profiles and schedules.')}</li><li><b>${t('Manager')}</b> – ${t('Manages all Admin work, portal accounts and activity log; may override booking conflicts. Cannot manage Super Admin accounts.')}</li><li><b>${t('Super Admin')}</b> – ${t('Full access.')}</li></ul>`;
 function userForm(u) {
   const body = openModal(u ? `Edit @${u.username}` : 'Add staff user', `<form class="form"><div class="g2">
     <label>Full name<input name="name" required value="${esc(u?.name || '')}"></label>
@@ -598,7 +598,7 @@ function userForm(u) {
     <label>E-mail<input name="email" type="email" value="${esc(u?.email || '')}"></label><label>Phone<input name="phone" value="${esc(u?.phone || '')}"></label>
     <label>Role<select name="role">${roleOptions(u?.role || 'admin')}</select></label>
     ${u ? `<label class="check" style="align-self:end"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}> Account active</label>` : ''}
-    </div>${ROLE_HELP}
+    </div>${ROLE_HELP()}
     ${u ? '' : '<p class="muted small" style="margin:0">A one-time sign-in code will be displayed after account creation. Share it securely; it expires in 10 minutes and requires a password change at first sign-in.</p>'}
     <p class="form-error" hidden></p><div class="form-actions"><button type="button" class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-primary" type="submit">${u ? 'Save' : 'Create user'}</button></div></form>`);
   onSubmit($('form', body), async (fd) => {
@@ -675,7 +675,8 @@ async function viewSettings(v) {
       <label>Currency code<input name="currency" required minlength="3" maxlength="3" pattern="[A-Za-z]{3}" value="${esc(b.currency)}"><small>Three-letter ISO currency code, e.g. LKR or USD.</small></label>
       <label>Reply mailbox<input name="companyEmail" type="email" maxlength="254" value="${esc(b.companyEmail)}"></label>
       <label>Public phone<input name="phone" maxlength="30" value="${esc(b.phone)}"></label>
-      <label class="span2">Service area<input name="serviceArea" maxlength="300" value="${esc(b.serviceArea)}"><small>Only publish areas the business has approved.</small></label>
+      <label>Service area scope<select name="serviceAreaScope">${[['local', 'Local'], ['regional', 'Regional'], ['nationwide', 'Nationwide'], ['worldwide', 'Worldwide'], ['custom', 'Custom details']].map(([value, label]) => `<option value="${value}" ${value === (b.serviceAreaScope || 'custom') ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label>Service area details<input name="serviceAreaDetails" maxlength="300" value="${esc(b.serviceAreaDetails || b.serviceArea || '')}"><small>Only publish approved locations or details. Details are optional for Worldwide.</small></label>
       <label>Timezone offset from UTC (minutes)<input name="timezoneOffsetMinutes" type="number" min="-720" max="840" step="15" value="${esc(b.timezoneOffsetMinutes)}"><small>Example: Sri Lanka Standard Time is UTC+5:30 (330 minutes).</small></label>
     </div><p class="form-error" hidden></p><div class="form-actions"><button class="btn btn-primary" type="submit">Save business settings</button></div></form>
   </section>

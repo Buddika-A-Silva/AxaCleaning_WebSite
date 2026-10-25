@@ -46,12 +46,12 @@ tests/api.test.mjs          end-to-end API tests (npm test)
 | Dashboard, availability board, notifications | ✅ | ✅ | ✅ |
 | View / accept / modify / reject / create / complete / cancel bookings | ✅ | ✅ | ✅ |
 | View agents and packages | ✅ | ✅ | ✅ |
-| Manage agents, leave, packages, extras | – | ✅ | ✅ |
+| Manage agents, leave, packages, extras | ✅ | ✅ | ✅ |
 | Create / edit / disable / delete **Admin and Manager** users | – | ✅ | ✅ |
 | Anything on a **Super Admin** account, or grant Super Admin | – | ❌ | ✅ |
 | Activity log | – | ✅ (excluding Super Admin entries) | ✅ |
 
-Safeguards: you can't change your own role or delete yourself, there is always at least one active Super Admin, and a role change, deactivation or password reset signs that user out everywhere.
+Admins can manage cleaning-agent profiles and schedules, packages, and extras, but cannot manage portal-user accounts or view the activity log. Safeguards: you can't change your own role or delete yourself, there is always at least one active Super Admin, and a role change, deactivation or password reset signs that user out everywhere.
 Availability conflicts can only be overridden by a Manager or Super Admin, and each override requires a reason.
 
 ### Languages
@@ -88,34 +88,37 @@ node dev-server.js
 
 Demo booking data can be enabled locally with `SEED_DEMO_DATA=true`; it does not create demo user accounts.
 
-> ⚠️ Production startup rejects the development signing-key fallback, missing Supabase storage credentials, and demo-data seeding. Configure `AUTH_SECRET` (at least 32 characters), `SUPABASE_URL`, the Supabase service-role secret, and a unique `SEED_SUPERADMIN_PASSWORD` (at least 12 characters with letters and numbers); set `SEED_DEMO_DATA=false`. The seed password is only required until the first Super Admin account is created. Set these as Supabase Edge Function secrets, never in source control or frontend configuration.
+> ⚠️ Production startup rejects the development signing-key fallback, missing Supabase storage credentials, and demo-data seeding. Configure `AUTH_SECRET` (at least 32 characters), `SUPABASE_URL`, the Supabase service-role secret, and `SEED_DEMO_DATA=false`. A unique `SEED_SUPERADMIN_PASSWORD` (at least 12 characters with letters and numbers) is needed only until the first Super Admin exists; remove it immediately after provisioning. Keep all secrets in Supabase Edge Function settings, never in source control or frontend configuration.
 
 ### Supabase Edge Functions and database
 
-The existing Supabase project is `wuhfojchbveaeozyztxs`. Staff sign-in remains app-managed; Supabase Auth is not used. Migration `20261025000100_create_app_store.sql` had already been applied. Migrations `20261025000200_add_edge_rpc.sql` and `20261025000300_add_staff_login_otps.sql` were applied in the Supabase SQL Editor on 2026-10-25 and verified: the private OTP and records tables exist, the records RPC resolves, the service role can execute the OTP setter, and `anon` cannot. The dashboard continues to show a technical-issue banner, so verify the full RPC grant set and migration history when the incident clears. App data, including staff records, is stored in the private `axa_records` table by collection; one-time sign-in codes are stored separately in the private `axa_auth_otps` table as salted scrypt hashes with expiry and an attempt limit. The API communicates through PostgREST RPC and does not require a database connection URL. Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (or the Supabase `SUPABASE_SECRET_KEYS` JSON value containing `default`) in Edge Function secrets. Never put a service-role key or other secret in frontend code, the repository, or chat. SSL enforcement was not confirmed; verify this setting before launch.
+The existing Supabase project is `wuhfojchbveaeozyztxs` in `ap-northeast-1` (Tokyo). Staff sign-in remains app-managed; Supabase Auth is not used. The private records, locks, and OTP tables exist. All 11 expected RPCs were verified to grant execute to `service_role` and not `anon`; direct SELECT/INSERT privileges on the private tables are denied to both roles, so the API accesses records through the RPCs. The project has no `supabase_migrations.schema_migrations` table because migrations were applied manually; do not reapply them blindly, and reconcile migration history before relying on CLI migration tracking. App data, including staff records, is stored in the private `axa_records` table by collection; one-time sign-in codes are stored separately in `axa_auth_otps` as salted scrypt hashes with expiry and an attempt limit. The API communicates through PostgREST RPC and does not require a database connection URL. Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (or the Supabase `SUPABASE_SECRET_KEYS` JSON value containing `default`) in Edge Function secrets. Never put a service-role key or other secret in frontend code, the repository, or chat. SSL enforcement is enabled and was verified after the database restart; a subsequent database query and live API health check succeeded.
 
 ### Staff account provisioning and reset codes
 
 Managers and Super Admins can create staff accounts in the portal. Creation issues a random eight-digit OTP that is displayed once to the administrator; share it securely with the staff member. It expires after 10 minutes, permits at most five attempts, and is consumed on the first successful sign-in. The new staff member must then set a permanent password before accessing portal features. Only a Super Admin can issue a reset OTP; this invalidates existing sessions and the user's previous password. OTP plaintext is never stored or written to activity logs. The existing `axa_records` table stores user profile/role/password-hash records; `axa_auth_otps` stores only salted OTP hashes and expiry/attempt metadata. If an OTP expires or is lost, a Super Admin can issue another from the Users section.
 
-Build the function bundle with `npm run build:edge --prefix api`, then deploy `supabase/functions/axa-api` using the Supabase CLI or dashboard. The checked-in `supabase/config.toml` disables platform JWT verification because the API performs staff-token authorization itself; the API's public routes and application authentication must remain protected by its own validation, throttling, and role checks. Configure `CORS_ALLOWED_ORIGINS` with the exact production frontend origin if it changes.
+Build the function bundle with `npm run build:edge --prefix api`, then deploy `supabase/functions/axa-api` using the Supabase CLI or dashboard. The `axa-api` function is deployed and its live health endpoint returns HTTP 200 using Supabase storage. The health response currently reports `mail: "log-only"` because a verified sender and Resend key are not configured. The checked-in `supabase/config.toml` disables platform JWT verification because the API performs staff-token authorization itself; the API's public routes and application authentication must remain protected by its own validation, throttling, and role checks. Configure `CORS_ALLOWED_ORIGINS` with the exact production frontend origin if it changes.
 
 ## Launch readiness and remaining work
 
 Admin sign-in intentionally uses application-managed username/password accounts; Microsoft Entra ID is not required. Use a unique production `AUTH_SECRET`, unique account passwords, HTTPS, and tightly controlled manager-created accounts.
 
-The Super Admin can set the company name, reply mailbox, public phone, service area, currency, and business timezone. Customer e-mail uses the Resend HTTP API, which is compatible with Supabase Edge Functions. Verify a sending domain in Resend, then configure its API key and sender as Supabase Edge Function secrets. The portal's readiness checklist reports missing settings, but a green configuration check is not a live e-mail delivery test.
+The Super Admin can set the company name, reply mailbox, public phone, service-area scope (local, regional, nationwide, worldwide, or custom) and optional area details, currency, and business timezone at any time. Public service-area scope labels are localized to English or Romanian. Customer e-mail uses the Resend HTTP API, which is compatible with Supabase Edge Functions. Verify a sending domain in Resend, then configure its API key and sender as Supabase Edge Function secrets. The portal's readiness checklist reports missing settings, but a green configuration check is not a live e-mail delivery test.
+
+The currently deployed staff portal's go-live checklist reports that the reply mailbox, public phone, service area, active packages, cleaning team, and Resend settings are incomplete. The current profile defaults to AXA Cleaning, LKR, and UTC+5:30; confirm the currency and timezone with the business owner before launch. The existing customer site and portal render in English and Romanian, but no frontend deployment was made during the latest production verification.
+
+Per owner direction, the portal does not block readiness on privacy/terms review. No legal text was created or reviewed, and removing this checklist item does not attest to legal compliance.
 
 **Do not treat this repository as launch-approved until the owner completes these items:**
 
-- Replace local demo package, price, extra, and agent data with approved business content; provide Romanian names/descriptions/features for packages and extras that need localization. Never reuse a development database for production.
+- Configure the production catalog with owner-approved packages, prices, extras, and agent schedules; add Romanian names/descriptions/features for content that needs localization. The current live catalog has no active packages. Never reuse a development database for production.
 - Confirm the service area, public contact details, and currency in Business Settings.
-- Have the privacy notice and terms reviewed and publish the approved content. The readiness checklist deliberately remains incomplete until this external action is done.
 - Implement secure, expiring customer self-service links if customers must change or cancel requests online. The current public tracking lookup uses the booking reference and customer e-mail and is read-only.
-- Verify the full Supabase RPC grant set and migration history, configure Edge Function secrets, deploy the Edge Function, and verify the API health endpoint and customer/staff workflows end-to-end.
+- Complete live end-to-end tests for customer booking/contact, staff login, OTP provisioning and password reset, role permissions, and booking updates. The API health, catalog endpoint, CORS preflight, RPC grants, active Super Admin, and SSL setting have already been checked; migration history still needs reconciliation before future CLI migration use.
 - Configure Resend with a verified sending domain, `RESEND_API_KEY`, and `MAIL_FROM`; test delivery and reply threading end-to-end.
-- Confirm the existing Static Web App workflow and deploy the frontend only; do not deploy Azure Functions or provision additional Azure resources.
-- Configure production monitoring/alerting, backup/restore, and operational support. Retry and verify Supabase SSL enforcement when its dashboard is available.
+- Confirm the existing Static Web App workflow publishes the current frontend and deploy only static frontend content; the existing hostname responds with HTTP 200. Do not deploy Azure Functions or provision additional Azure resources.
+- Configure production monitoring/alerting, backup/restore, and operational support. SSL enforcement is enabled.
 - Exercise distributed booking locks against the production database and expected concurrent load.
 
 ### Local setup
@@ -134,7 +137,7 @@ For a fresh local database, set `SEED_SUPERADMIN_PASSWORD` and start `npm run de
 | `SUPABASE_URL` | Existing Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEYS` | Service-role secret, configured in Supabase function secrets only |
 | `CORS_ALLOWED_ORIGINS` | Optional comma-separated exact frontend origins |
-| `SEED_SUPERADMIN_PASSWORD` | Unique initial password; only needed before the first Super Admin exists |
+| `SEED_SUPERADMIN_PASSWORD` | Set only for initial provisioning, then remove; the production Super Admin is already provisioned |
 | `SEED_DEMO_DATA` | `false` |
 | `RESEND_API_KEY` | Resend API key, configured as a Supabase function secret only |
 | `MAIL_FROM` | Sender identity verified in Resend; configure as a Supabase function secret |

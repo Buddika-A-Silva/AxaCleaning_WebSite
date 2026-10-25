@@ -1,5 +1,6 @@
 'use strict';
 const crypto = require('crypto');
+const { settings } = require('./runtime-config');
 
 class HttpError extends Error {
   constructor(status, message, details) {
@@ -33,7 +34,7 @@ function addDays(date, n) {
 }
 // "Today" in the business time zone (configurable offset in minutes, default from TZ_OFFSET_MINUTES or UTC)
 function today() {
-  const off = Number(process.env.TZ_OFFSET_MINUTES || 0);
+  const off = Number(settings.timezoneOffsetMinutes || 0);
   return new Date(Date.now() + off * 60000).toISOString().slice(0, 10);
 }
 

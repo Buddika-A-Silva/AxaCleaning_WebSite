@@ -8,9 +8,10 @@
  * Without a Resend API key the messages are recorded in the e-mail log only (status "logged").
  */
 const { uid, nowIso, escapeHtml } = require('./util');
+const { settings } = require('./runtime-config');
 
-const COMPANY = (business) => business?.companyName || process.env.COMPANY_NAME || 'AXA Cleaning';
-const COMPANY_EMAIL = (business) => business?.companyEmail || process.env.COMPANY_EMAIL || '';
+const COMPANY = (business) => business?.companyName || settings.companyName || 'AXA Cleaning';
+const COMPANY_EMAIL = (business) => business?.companyEmail || settings.companyEmail || '';
 const FROM = (business) => process.env.MAIL_FROM || (COMPANY_EMAIL(business) ? `${COMPANY(business)} <${COMPANY_EMAIL(business)}>` : 'AXA Cleaning <noreply@localhost>');
 const domainOf = (addr) => (String(addr).match(/@([^>\s]+)/) || [])[1] || 'axacleaning.com';
 
@@ -48,7 +49,7 @@ function resendMessage(message) {
   };
 }
 
-const money = (n, currency = process.env.CURRENCY || 'USD', language = 'en') => {
+const money = (n, currency = settings.currency || 'USD', language = 'en') => {
   try { return new Intl.NumberFormat(language === 'ro' ? 'ro-RO' : 'en-US', { style: 'currency', currency }).format(n); }
   catch { return `${currency} ${n}`; }
 };

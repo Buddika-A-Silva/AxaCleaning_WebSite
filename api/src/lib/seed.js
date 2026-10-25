@@ -8,6 +8,8 @@ const BUSINESS_DEFAULTS = {
   companyEmail: process.env.COMPANY_EMAIL || '',
   phone: process.env.COMPANY_PHONE || '',
   serviceArea: process.env.SERVICE_AREA || '',
+  serviceAreaScope: 'custom',
+  serviceAreaDetails: process.env.SERVICE_AREA || '',
   currency: process.env.CURRENCY || 'LKR',
   timezoneOffsetMinutes: Number(process.env.TZ_OFFSET_MINUTES || 330),
 };

@@ -148,11 +148,36 @@ test('notifications: staff are notified of the new request', async () => {
 
 test('roles: admin limits', async () => {
   assert.equal((await call('GET', '/admin/users', null, adm)).status, 403);
-  assert.equal((await call('POST', '/admin/agents', { name: 'X Y' }, adm)).status, 403);
-  assert.equal((await call('POST', '/admin/packages', { name: 'X', price: 1 }, adm)).status, 403);
   assert.equal((await call('GET', '/admin/audit', null, adm)).status, 403);
   assert.equal((await call('GET', '/admin/stats', null, adm)).status, 200);
   assert.equal((await call('GET', '/admin/availability', null, adm)).status, 200);
+});
+
+test('admin can manage packages and agents but not portal accounts', async () => {
+  const agent = await call('POST', '/admin/agents', { name: 'Admin Cleaner', workingDays: [1, 3, 5] }, adm);
+  assert.equal(agent.status, 201);
+  assert.equal((await call('PATCH', `/admin/agents/${agent.body.id}`, { active: false }, adm)).body.active, false);
+  const leaveDate = futureWorkday(40);
+  assert.equal((await call('POST', `/admin/agents/${agent.body.id}/leave`, { date: leaveDate, reason: 'Training' }, adm)).status, 200);
+  assert.equal((await call('DELETE', `/admin/agents/${agent.body.id}/leave/${leaveDate}`, null, adm)).status, 200);
+  assert.equal((await call('DELETE', `/admin/agents/${agent.body.id}`, null, adm)).status, 200);
+
+  const pkg = await call('POST', '/admin/packages', { name: 'Admin Package', price: 25 }, adm);
+  assert.equal(pkg.status, 201);
+  assert.equal((await call('PATCH', `/admin/packages/${pkg.body.id}`, { name: 'Updated Admin Package' }, adm)).body.name, 'Updated Admin Package');
+  assert.equal((await call('DELETE', `/admin/packages/${pkg.body.id}`, null, adm)).status, 200);
+
+  const beforeExtras = (await call('GET', '/admin/packages', null, adm)).body.extras;
+  const extras = await call('PUT', '/admin/extras', { items: [...beforeExtras, { id: 'admin-extra', name: 'Admin Extra', price: 5 }] }, adm);
+  assert.equal(extras.status, 200);
+  assert.ok(extras.body.items.some((item) => item.id === 'admin-extra'));
+  assert.equal((await call('PUT', '/admin/extras', { items: beforeExtras }, adm)).status, 200);
+
+  assert.equal((await call('GET', '/admin/users', null, adm)).status, 403);
+  assert.equal((await call('POST', '/admin/users', { username: 'another-admin', role: 'admin' }, adm)).status, 403);
+  assert.equal((await call('PATCH', '/admin/users/not-a-user', { name: 'Not allowed' }, adm)).status, 403);
+  assert.equal((await call('DELETE', '/admin/users/not-a-user', null, adm)).status, 403);
+  assert.equal((await call('POST', '/admin/users/not-a-user/reset-password', {}, adm)).status, 403);
 });
 
 test('roles: manager cannot touch super admin or reset passwords; can manage others', async () => {
@@ -361,8 +386,19 @@ test('Super Admin business settings control public profile without exposing secr
   assert.equal(publicProfile.body.company.serviceArea, 'Approved Test Area');
   const settings = await call('GET', '/admin/settings', null, su);
   assert.equal(settings.body.business.currency, 'AUD');
-  assert.ok(settings.body.checks.some((c) => c.id === 'legal' && !c.ready));
+  assert.equal(settings.body.business.serviceAreaScope, 'custom');
+  assert.equal(settings.body.business.serviceAreaDetails, 'Approved Test Area');
+  assert.equal(settings.body.checks.some((c) => c.id === 'legal'), false);
   assert.deepEqual(Object.keys(settings.body.mail).sort(), ['apiKeyConfigured', 'mode', 'senderConfigured']);
+
+  const worldwide = await call('PUT', '/admin/settings', { serviceAreaScope: 'worldwide', serviceAreaDetails: '' }, su);
+  assert.equal(worldwide.status, 200, JSON.stringify(worldwide.body));
+  assert.equal((await call('GET', '/admin/settings', null, su)).body.checks.find((c) => c.id === 'service-area').ready, true);
+  assert.equal((await call('GET', '/packages')).body.company.serviceArea, 'Worldwide');
+  assert.equal((await call('GET', '/packages', null, null, { 'Accept-Language': 'ro' })).body.company.serviceArea, 'La nivel mondial');
+
+  const invalidArea = await call('PUT', '/admin/settings', { serviceAreaScope: 'planetwide' }, su);
+  assert.equal(invalidArea.status, 400);
 });
 
 test('staff password change revokes existing sessions', async () => {

@@ -31,6 +31,7 @@ const messages = {
   'Booking not found': 'Rezervarea nu a fost găsită.',
   'Package not found': 'Pachetul nu a fost găsit.',
   'Agent not found': 'Membrul personalului nu a fost găsit.',
+  'Service area scope is invalid': 'Scara zonei deservite nu este validă.',
   'No packages are currently available': 'Momentan nu există pachete disponibile.',
   'Configure the company mailbox and verified MAIL_FROM before enabling Resend delivery.': 'Configurează adresa de e-mail a companiei și expeditorul MAIL_FROM verificat înainte de a activa trimiterea prin Resend.',
   'Too many messages. Please try again later.': 'Ai trimis prea multe mesaje. Te rugăm să încerci mai târziu.',
